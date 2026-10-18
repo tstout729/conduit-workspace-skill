@@ -14,8 +14,9 @@ It works in [Claude Code](https://claude.com/claude-code), [Codex](https://opena
 
 Ask your agent to set up Conduit, raise the automation rate, or find out why the AI answered wrong, stayed silent or escalated. The skill loads and gives the agent a method:
 
-1. **A loop, not a one-time setup.** Measure the automation rate. Collect every conversation a person still handled. Find the cause of each one. Fix the biggest group first. Replay those cases as tests. Ship, then measure again.
-2. **Each fix in the layer that owns it.**
+1. **A loop, not a one-time setup.** Measure the automation rate. Collect every conversation that didn't end the way you intended: a person handled it, the AI stayed silent or escalated, or a reply went out and got the wrong outcome. Find the cause of each one. Fix the biggest group first. Replay those cases as tests. Ship, then measure again.
+2. **Facts from your own sources.** When the AI lacked a fact, the agent looks for it where you already keep it, through whatever connectors it has: Notion, your wiki or second brain, Google Sheets or Drive, your PMS. It notes where each fact came from. What no source answers, it asks you in one short list, and never guesses.
+3. **Each fix in the layer that owns it.**
 
    | Symptom | Fix it in |
    | --- | --- |
@@ -26,9 +27,9 @@ Ask your agent to set up Conduit, raise the automation rate, or find out why the
    | The agent needed live data or an action | Tool and its backend |
    | The agent never ran | Runtime: mode, triggers, routing |
 
-3. **Four modes.** *Raise automation* runs the loop. *Build* sets up a new agent, knowledge first, and starts it in copilot mode. *Fix one bad answer* traces a single reply back to its cause. *Audit* reads everything and changes nothing.
-4. **Safety rules in every mode.** Your own rules come first. Take a snapshot before any change and read it back after. Never bulk-delete knowledge. Keep access codes out of prompts and serve them through a tool that checks the guest, the stay and the time. Test that the agent still replies when it should.
-5. **A plain report.** What changed and why, the numbers before and after, the tests, and how to roll back.
+4. **Four modes.** *Raise automation* runs the loop. *Build* sets up a new agent, knowledge first, and starts it in copilot mode. *Fix one bad answer* traces a single reply back to its cause. *Audit* reads everything and changes nothing.
+5. **Safety rules in every mode.** Your own rules come first. Take a snapshot before any change and read it back after. Never bulk-delete knowledge. Keep access codes out of prompts and serve them through a tool that checks the guest, the stay and the time. Test that the agent still replies when it should.
+6. **A plain report.** What changed and why, the numbers before and after, the tests, the questions no source answered, and how to roll back.
 
 It also covers what the Conduit API documentation doesn't put in one place: where `PATCH` replaces a whole list, why the simulator's `no_op` looks like a pass, which metric counts answer-and-escalate as automation, and how to list every knowledge article.
 

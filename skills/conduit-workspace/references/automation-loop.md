@@ -29,13 +29,15 @@ Run it daily during a push and weekly after.
    - pending escalations (`GET /v1/escalations`);
    - runs with `escalated`, `unresolved` or `no_op` dispositions (`GET /v1/agents/{id}/runs`);
    - threads with a teammate message;
+   - replies that went out but didn't get the outcome the operator intended: the guest asked again, a promise nobody kept, a wrong answer;
    - anything the operator flagged.
 2. **Read.** Read each full thread and its run (`GET /v1/agents/{id}/runs/{run_id}`): skills loaded, tool calls and results, sources, guardrails, `disposition_reason`.
 3. **Classify.** Name the cause with the table in section 3. Tally by cause. Fix the largest class first.
-4. **Fix the class.** Change the owning layer for every listing and scenario the cause affects, not the one thread. Then make every other layer agree with it.
-5. **Test.** Replay the cases, their neighboring scenarios and the reply-value cases ([API and testing](api-and-testing.md)).
-6. **Ship.** Apply, read back, sample the next real runs and remeasure.
-7. **Record.** Save the rule once, where the operator keeps rules.
+4. **Fill the facts.** For a missing or wrong fact, search the operator's own sources first ([Knowledge](knowledge.md), section 1). Ask the operator, in one short list, for what no source answers.
+5. **Fix the class.** Change the owning layer for every listing and scenario the cause affects, not the one thread. Then make every other layer agree with it.
+6. **Test.** Replay the cases, their neighboring scenarios and the reply-value cases ([API and testing](api-and-testing.md)).
+7. **Ship.** Apply, read back, sample the next real runs and remeasure.
+8. **Record.** Save the rule once, where the operator keeps rules.
 
 The highest-yield habit: during the push, one person who knows the homes handles every escalated conversation. Each repeat becomes a knowledge fact, a Conduit skill change or a tool the same day.
 
