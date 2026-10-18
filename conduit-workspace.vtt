@@ -1,0 +1,91 @@
+WEBVTT
+
+00:00.800 --> 00:05.600
+Last November, our Conduit automation rate was forty-one percent.
+
+00:05.600 --> 00:08.330
+In October, it hit ninety-two.
+
+00:08.900 --> 00:10.500
+How did we get there?
+
+00:10.500 --> 00:12.740
+With Claude Code and Codex,
+
+00:12.740 --> 00:14.750
+and one simple method.
+
+00:15.320 --> 00:16.810
+Measure the rate.
+
+00:16.840 --> 00:20.450
+Collect every conversation a person still handled.
+
+00:20.520 --> 00:22.040
+Find the cause.
+
+00:22.040 --> 00:23.930
+Fix the biggest group.
+
+00:23.960 --> 00:26.210
+Replay those cases as tests.
+
+00:26.440 --> 00:27.250
+Ship it.
+
+00:27.400 --> 00:29.090
+Then do it again.
+
+00:29.660 --> 00:32.590
+Each fix goes in the layer that owns it.
+
+00:32.620 --> 00:34.790
+A missing fact is knowledge.
+
+00:35.020 --> 00:37.190
+The wrong voice is the persona.
+
+00:37.500 --> 00:39.350
+A leak is a guardrail.
+
+00:39.580 --> 00:42.430
+A skipped step is a Conduit skill.
+
+00:42.460 --> 00:44.310
+Live data is a tool.
+
+00:44.460 --> 00:47.750
+And an agent that never ran is the runtime.
+
+00:48.320 --> 00:52.210
+The Conduit workspace skill teaches your agent this method.
+
+00:52.240 --> 00:54.880
+Ask it to raise your automation rate.
+
+00:54.880 --> 00:57.040
+It takes a read-only snapshot,
+
+00:57.040 --> 00:59.800
+measures, reads what people still handled,
+
+00:59.800 --> 01:02.330
+and fixes the biggest cause first.
+
+01:02.900 --> 01:05.140
+It follows your rules first.
+
+01:05.140 --> 01:07.620
+It snapshots before every change,
+
+01:07.620 --> 01:12.110
+never bulk-deletes knowledge, and keeps access codes out of prompts.
+
+01:12.680 --> 01:14.760
+It's free and open source.
+
+01:14.760 --> 01:17.400
+Install it in Claude Code or Codex,
+
+01:17.400 --> 01:19.410
+and point it at your workspace.
