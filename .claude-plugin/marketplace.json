@@ -1,0 +1,15 @@
+{
+  "name": "conduit-workspace-skill",
+  "description": "The Conduit workspace skill: raise your Conduit AI automation rate with Claude Code or Codex.",
+  "owner": {
+    "name": "Trevor Stout",
+    "url": "https://github.com/tstout729"
+  },
+  "plugins": [
+    {
+      "name": "conduit-workspace",
+      "source": "./",
+      "description": "Build, audit and improve a Conduit AI guest-messaging workspace (knowledge base, persona, guardrails, Conduit skills, custom tools and tests) so the AI resolves more conversations without a person."
+    }
+  ]
+}

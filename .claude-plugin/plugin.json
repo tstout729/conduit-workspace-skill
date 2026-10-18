@@ -1,0 +1,14 @@
+{
+  "name": "conduit-workspace",
+  "displayName": "Conduit Workspace",
+  "version": "1.0.0",
+  "description": "Build, audit and improve a Conduit AI guest-messaging workspace (knowledge base, persona, guardrails, Conduit skills, custom tools and tests) so the AI resolves more conversations without a person.",
+  "author": {
+    "name": "Trevor Stout",
+    "url": "https://github.com/tstout729"
+  },
+  "homepage": "https://github.com/tstout729/conduit-workspace-skill",
+  "repository": "https://github.com/tstout729/conduit-workspace-skill",
+  "license": "MIT",
+  "keywords": ["conduit", "guest-messaging", "short-term-rental", "vacation-rental", "ai-agent", "automation", "hospitality"]
+}

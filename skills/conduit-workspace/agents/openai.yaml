@@ -1,0 +1,4 @@
+interface:
+  display_name: "Conduit Workspace"
+  short_description: "Build Conduit agents that resolve guest messages"
+  default_prompt: "Use $conduit-workspace to audit or improve this Conduit workspace's knowledge, persona, guardrails, skills and tools."

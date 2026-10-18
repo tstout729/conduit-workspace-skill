@@ -1,0 +1,36 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile the scripts
+        run: for f in skills/conduit-workspace/scripts/*.py; do python3 -m py_compile "$f"; done
+      - name: Offline tests (no Conduit token needed)
+        run: python3 -I -B tests/test_scripts.py
+      - name: Plugin manifests are valid JSON
+        run: python3 -c "import json; [json.load(open(f)) for f in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']]"
+      - name: Skill frontmatter
+        run: |
+          python3 - <<'PY'
+          import re
+          text = open("skills/conduit-workspace/SKILL.md").read()
+          front = re.match(r"---\n(.*?)\n---\n", text, re.S).group(1)
+          desc = re.search(r"^description: (.*)$", front, re.M).group(1)
+          assert re.search(r"^name: conduit-workspace$", front, re.M), "name"
+          assert len(desc) <= 1024 and "<" not in desc and ">" not in desc, "description"
+          print("ok", len(desc), "characters")
+          PY
