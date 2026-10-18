@@ -1,11 +1,11 @@
 ---
 name: conduit-workspace
-description: Build, audit, or improve a Conduit AI guest-messaging workspace (knowledge base, agent persona, guardrails, Conduit agent skills, custom tools, tests) so the AI resolves more conversations without a person. Use when setting up Conduit agents, raising the automation rate, or finding why an agent answered wrongly, stayed silent, or escalated. Not for writing a single guest reply.
+description: Build, audit, or improve a Conduit AI guest-messaging workspace (knowledge base, agent persona, guardrails, Conduit agent skills, custom tools, tests) so the AI resolves more conversations without a person. Fills knowledge gaps from the operator's own sources (Notion, a wiki, Google Sheets, the PMS) and asks only what they can't answer. Use when setting up Conduit agents, raising the automation rate, or finding why an agent answered wrongly, stayed silent, or escalated. Not for writing a single guest reply.
 ---
 
 # Conduit workspace
 
-Turn a Conduit workspace into one that resolves most guest conversations alone, and safely. One short-term-rental operator reported moving from about 50% to over 90% automation with this method; the metric and the causes weren't independently measured. Their gains came from a loop, not one setup pass: measure, read what people still handled, fix the layer that caused it, test, repeat.
+Turn a Conduit workspace into one that resolves most guest conversations alone, and safely. One short-term-rental operator reported moving from about 50% to over 90% automation with this method; the metric and the causes weren't independently measured. Their gains came from a loop, not one setup pass: measure; read every conversation that didn't end the way the operator intended; name the layer that caused it; fill missing facts from the operator's own sources and ask about the rest; fix that layer; test; repeat.
 
 ## Terms
 
@@ -23,10 +23,11 @@ Turn a Conduit workspace into one that resolves most guest conversations alone, 
 5. Treat an audit as read-only. Make live changes only with the operator's authorization for that change. Simulations and test agents count as writes.
 6. Snapshot every object you will change, and every other agent that uses it, before writing. Read back with an independent GET afterward. A PATCH echo proves nothing.
 7. Never bulk-delete, template or strip knowledge. Missing evidence is a gap to fill, not proof a fact is wrong.
-8. Keep credentials out of persona, guardrails, skill bodies and tool code. Serve entry codes through a tool that checks the guest, the stay and the access window. Listing scope alone doesn't enforce timing.
-9. Treat shared and global objects as edits to every agent. Copy a shared object for the target agent instead of editing the original.
-10. Let the agent claim an action only when a tool result confirms it.
-11. Test that the agent replies when it should, not only that it stays quiet. Over-silence and over-security are failures too.
+8. Fill gaps from the operator's own sources before asking: Notion, a wiki or second brain, Google Sheets or Drive, the PMS, field notes, through whatever connectors you can reach. Note where each fact came from. Ask the operator only what no source answers, or where sources disagree, in one short list. Never guess a fact about a home.
+9. Keep credentials out of persona, guardrails, skill bodies and tool code. Serve entry codes through a tool that checks the guest, the stay and the access window. Listing scope alone doesn't enforce timing.
+10. Treat shared and global objects as edits to every agent. Copy a shared object for the target agent instead of editing the original.
+11. Let the agent claim an action only when a tool result confirms it.
+12. Test that the agent replies when it should, not only that it stays quiet. Over-silence and over-security are failures too.
 
 ## Put each fix in the layer that owns it
 
@@ -46,16 +47,17 @@ Conduit's own test applies: if the agent found nothing relevant, fix knowledge. 
 **Raise automation** (default when the request is open-ended). Read [Automation loop](references/automation-loop.md) first.
 
 1. Measure a baseline with Conduit's rate endpoints and your own unanswered-message counts.
-2. Pull every conversation a person handled, the agent escalated, or the agent left silent in the window.
+2. Pull every conversation in the window that didn't end the way the operator intended: a person handled it, the agent escalated or stayed silent, or a reply went out and got the wrong outcome.
 3. Read each thread and its run trace. Classify the cause and its owning layer.
-4. Fix the largest class first, in its owning layer, for every listing it affects.
-5. Replay those cases plus neighboring scenarios.
-6. Apply and read back. Sample the next real runs, then remeasure.
+4. For each missing or wrong fact, search the operator's own sources ([Knowledge](references/knowledge.md), section 1). Ask the operator, in one short list, for whatever no source answers.
+5. Fix the largest class first, in its owning layer, for every listing it affects.
+6. Replay those cases plus neighboring scenarios.
+7. Apply and read back. Sample the next real runs, then remeasure.
 
 **Build a new workspace or agent.**
 
 1. Decide scope: brands, listings, channels, what stays human, and who picks up the agent's silence.
-2. Build knowledge first.
+2. Build knowledge first, from the operator's own sources. Ask for what they lack.
 3. Add tools for the most frequent live lookups.
 4. Write the persona and guardrails.
 5. Add Conduit skills for the most frequent human-handled cases.
@@ -106,4 +108,4 @@ Answer the task that was asked. Put unrelated findings in one short "also notice
 3. Each change: object, owning layer, cause, evidence, and state (drafted, applied, tested, live).
 4. Tests run or planned: cases, results, and what they can't cover (for example, the API simulator can't attach a reservation).
 5. Snapshot location and how to roll back.
-6. Open items and decisions the operator must make.
+6. Questions no source answered, open items, and decisions the operator must make.

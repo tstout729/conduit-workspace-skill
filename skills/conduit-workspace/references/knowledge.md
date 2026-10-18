@@ -6,6 +6,8 @@ Contents: 1. Sources · 2. A complete listing · 3. Access and credentials · 4.
 
 ## 1. Sources
 
+Start with what the operator already keeps. Ask where their facts live, then list the connectors you can reach: Notion, a wiki or second brain, Google Sheets or Drive, the PMS, a folder of property notes. Search them for each gap before asking anyone, and note which source each fact came from.
+
 Use them in this order:
 
 1. The field team's property notes and trackers (locks, spare keys, Wi-Fi, quirks).
@@ -17,6 +19,8 @@ Use them in this order:
 Save durable facts. Skip one-off defects already being fixed. Give a temporary notice its removal condition. Write a fleet-wide pattern once, such as how a lock model behaves, in a group- or workspace-scoped article.
 
 Err toward more information. A knowledge base that is too thin causes lockouts and silent turns; one with extra true detail costs little.
+
+**Ask for the rest.** When no source has a fact, or two sources disagree, don't guess. Collect these into one short list for the operator: one question per fact, grouped by listing, each answerable in a few words ("Pine Cottage: can guests park on the street?"). Write each answer to the operator's canonical source first, then to Conduit (section 6), so the next run finds it.
 
 ## 2. A complete listing
 
