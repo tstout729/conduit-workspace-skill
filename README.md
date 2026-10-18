@@ -2,6 +2,10 @@
 
 **Raise your [Conduit](https://conduit.ai) AI automation rate with Claude Code or Codex.**
 
+<a href="https://tstout729.github.io/conduit-workspace-skill/"><img src="https://tstout729.github.io/conduit-workspace-skill/conduit-workspace.jpg" alt="Conduit's Insights card: automation rate 92%, up from 41% in November 2025" width="720"></a>
+
+*[Watch the 80-second film](https://tstout729.github.io/conduit-workspace-skill/) in your browser, or the [40-second social cut](https://tstout729.github.io/conduit-workspace-skill/#social). Both were made in code with the [video skill](https://github.com/tstout729/video-skill); the screens are redrawn, not recorded.*
+
 I run a vacation rental management company. In November 2025, our Conduit automation rate was 41%. In October 2026, it was 92%. I got there with Claude Code and Codex, one fix at a time. This skill is the method, written down so your coding agent can use it in your Conduit workspace.
 
 It works in [Claude Code](https://claude.com/claude-code), [Codex](https://openai.com/codex) and any agent that supports [Agent Skills](https://agentskills.io).
