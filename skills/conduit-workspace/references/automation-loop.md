@@ -10,17 +10,21 @@ Write down the definition and window before you pull numbers.
 
 | Measure | Source | Notes |
 | --- | --- | --- |
-| AI-sent share | `GET /v1/insights/automation_rate?workspace_id&start_date&end_date[&category_name]` | Sent decisions ÷ countable decisions. Answer-and-escalate counts as sent. Window ≤ 90 days. `breakdown.by_disposition` and the daily `series` show where the rest went. |
+| AI-sent share | `GET /v1/insights/automation_rate?workspace_id&start_date&end_date[&category_name]` | Sent decisions ÷ countable decisions, not conversations. Answer-and-escalate, sends the agent marked unresolved and notifier agents' messages all count as sent; silent turns are left out. Window ≤ 90 days. `breakdown.by_disposition` and the daily `series` (in the workspace's time zone) show where the rest went. |
 | Handled alone | `GET /v1/insights/resolution_rate`, field `fully_autonomous` | Resolved, sent, no teammate message, no escalation. Report it with its denominator: eligible autopilot threads only, excluding `no_op`, copilot, inactive and unlinked runs. Its `breakdown` splits threads by final disposition, human intervention and escalation. |
 | Unanswered | Your own query over conversations | Latest guest message with no reply after 15 minutes and after 2 hours. |
 | Came back | Conversations after an AI reply | The guest wrote again within 24 hours, a teammate stepped in, or the guest called. A rising share means replies that look automated aren't working. |
-| Human outbound share | Outbound messages with `sender.type: user` | `is_sent_by_autopilot: false` also covers workflow, other agents and API sends (`workflow`, `agent`, `external`); separate them. |
+| Human outbound share | Outbound messages with `sender.type: user`, plus teammates' replies from other systems | `is_sent_by_autopilot: false` also covers workflows, other agents and API sends. `sender.type` alone can't separate people from automations; check a few known sends. |
 | Human work off-thread | Your operations records | Staff actions the conversation never shows (calls, visits, refunds). |
 | Quality | A read sample of sent replies, plus Conduit's scores | Unsupported claims, wrong listing, internal language, double replies, guest had to repeat. `GET /v1/conversations/lookup` returns `sentiment` and scores for customer sentiment, service quality and stay quality (1–5 when observed; the spec gives no range). |
 
 - Insights endpoints allow about 10 requests per minute. Record `formula_version` and compare it before comparing periods.
+- Compare like with like. Early months can lack dispositions (every decision `unknown`) and resolution data, so a rate then and a rate now may not be counted the same way. Say so beside any before-and-after.
+- Separate notifier agents (check-in ready, ID verified and similar) from guest-answering agents: their sends count as AI sends but answer no guest. Split decisions by agent with the runs list.
+- `category_name` filters by inbox category. A custom inbox needs its ID, and a name Conduit doesn't know returns zeros, not an error. Rates group by each contact's current inbox, so moving contacts rewrites past numbers.
+- `fully_autonomous` judges each thread over the whole window: widening the window can lower it.
 - `no_op` counts, `autopilot_sent` (null means "not counted", not false) and test pass counts are not automation measures.
-- A correct silent turn lowers the AI-sent share. Never chase the number with holding replies or by removing legitimate silence.
+- Silent turns are left out of the automation rate entirely, so it says nothing about over-silence; count `no_op` runs yourself. Never chase any number with holding replies or by removing legitimate silence.
 - If the operator moved some homes or channels to another system during the window, say so next to the number. A shrinking set of conversations changes a rate without any fix.
 
 ## 2. The loop
@@ -28,9 +32,9 @@ Write down the definition and window before you pull numbers.
 Run it daily during a push and weekly after.
 
 1. **Collect.** Gather every conversation in the window that didn't end the way the operator intended. `scripts/conduit_failures.py` pulls the API signals into a private folder: one case per conversation with no message text, and an escalations file that holds guest messages and reviewer names. Keep the folder private.
-   - **Escalations of every status** (`GET /v1/escalations`, each `status` in turn). `questions_for_operator` and `request_for_additional_info` say what the agent lacked. Resolved ones also hold the teammate's answer in the thread.
-   - **Runs** that escalated, stayed silent (`no_op`), ended `unresolved` or failed (`GET /v1/agents/{id}/runs`; it filters by `status` only, so filter dispositions yourself). Some `no_op` turns are correct silence. A run with `autopilot_sent: false` decided to answer but nothing reached the guest. In copilot, a draft people edited or dismissed (`proposal_outcome`) is a failure too.
-   - **Teammate replies**: a message with `sender.type: user` after the agent's reply, or a thread only teammates answered. In copilot, people send the approved drafts, so use `proposal_outcome` there instead.
+   - **Escalations of every status** (`GET /v1/escalations`, each `status` in turn). `questions_for_operator` and `request_for_additional_info` say what the agent lacked. Resolved ones also hold the teammate's answer in the thread. If the team closes cases somewhere else (a Slack channel, a ticket system, an observer), read them there.
+   - **Runs** that escalated, stayed silent (`no_op`), ended `unresolved` or failed (`GET /v1/agents/{id}/runs`; it filters by `status` only, so filter dispositions yourself). Some `no_op` turns are correct silence, and in some workspaces `unresolved` is the agent's normal "leave it open for the team" result; read a few before treating either as failure. A run with `autopilot_sent: false` decided to answer but nothing reached the guest. In copilot, a draft people edited or dismissed (`proposal_outcome`) is a failure too.
+   - **Teammate replies**: a message with `sender.type: user` after the agent's reply, or a thread only teammates answered. In copilot, people send the approved drafts, so use `proposal_outcome` there instead. The operator's own automations can appear as `user`, and teammates replying from another system as `external`; check a few known sends before trusting the count.
    - **Outcome failures after an AI reply**, which no disposition shows:
      - the guest wrote again within 24 hours with a follow-up ("still", "again", "any update", "didn't work", "can't find");
      - the guest's last message got no reply;
@@ -41,7 +45,7 @@ Run it daily during a push and weekly after.
    - **What the operator flagged**, and the top issues from Conduit's Escalations tab (section 5).
 
    When there are more than about 150 cases, read every case in the three largest groups and a sample of the rest. The rate limit is shared with live guests.
-2. **Read.** Read each full thread and its run (`GET /v1/agents/{id}/runs/{run_id}`): skills loaded, tool calls and results, sources, guardrails, `disposition_reason`. Read scheduled, workflow and portal messages the guest received before writing.
+2. **Read.** Read each full thread and its run (`GET /v1/agents/{id}/runs/{run_id}`): skills loaded, tool calls and results, sources, guardrails, `disposition_reason`. The run's `tool_trace` can come back empty; MCP `get_agent_trace` then shows the tool calls, with long arguments and results cut short. Read scheduled, workflow and portal messages the guest received before writing.
 3. **Classify.** Name the cause with the table in section 3. A case can have two causes; record both. Tally by cause. Fix the largest agent class first.
 4. **Fill the facts.** For a missing or wrong fact, take it in this order:
    1. Conduit's own question for the operator on the escalation names the gap.
@@ -73,8 +77,9 @@ The highest-yield habit: during the push, one person who knows the homes handles
 | Wrong language | A reply in a language the guest didn't write in | Behavior: `response_language` (`Original` answers in the guest's language). |
 | Must stay human | Refund decisions, disputes, legal | An urgent tag or handoff route, not more instructions. |
 | Never ran | No run record | Section 8. |
+| Tool-call limit | A long run, many tool calls, and Conduit's own "someone from our team will follow up" line sent | Cut tool use per run: call each status tool once, no tools for closing remarks. Ask Conduit whether the fallback can be silenced. |
 | Another sender | A workflow, scheduled, PMS, portal or template message gave a wrong or confusing fact, or the guest is replying to one | Fix that sender's text, then make knowledge agree ([Knowledge](knowledge.md), section 9). |
-| Person or process | The reply was right, but the home wasn't ready, a lock was offline, a code wasn't set, a teammate didn't follow up, a vendor didn't come, an owner changed something | Not an agent fix. List it for the operator with conversation IDs and evidence (device history, task records). Change the agent only if it made a promise the process couldn't keep. |
+| Person or process | The reply was right, but the home wasn't ready, a lock was offline, a code wasn't set, a teammate didn't follow up, a vendor didn't come, an owner changed something | Not an agent fix. List it for the operator with conversation IDs and evidence (device history, task records). Change the agent only if it promised something no tool result confirmed; passing on a confirmed time or status is the agent doing its part. |
 
 ## 4. The fix log
 
@@ -136,4 +141,4 @@ Routing moves contacts on new bookings only. Move existing contacts deliberately
 - an urgent tag or escalation rule;
 - the guest called instead: voice agents are separate (MCP `list_voice_agents`) and calls are at `GET /v1/calls`.
 
-**A run with `no_op` or `escalated`.** Read `disposition_reason`. Find the instruction, guardrail, escalation rule or tool result that produced it.
+**A run with `no_op` or `escalated`.** Read `disposition_reason`, or the run's `reflection` when that is empty. Find the instruction, guardrail, escalation rule or tool result that produced it.
