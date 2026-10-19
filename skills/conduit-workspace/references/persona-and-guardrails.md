@@ -2,7 +2,7 @@
 
 Read this to write or review an agent's persona, voice, guardrails, silence rules or claims.
 
-Contents: 0. Operator choices · 1. Persona layout · 2. Voice · 3. Guardrail format · 4. Silence and replies · 5. Truthful claims · 6. Controls, not text · 7. Traps
+Contents: 0. Operator choices · 1. Persona layout · 2. Voice · 3. Guardrail format · 4. Silence and replies · 5. Truthful claims · 6. Controls, not text · 7. Behavior settings · 8. Traps
 
 ## 0. Operator choices
 
@@ -16,6 +16,8 @@ Settle these with the operator before writing behavior. The defaults below worke
 | Access details | The verified current guest gets everything for their own unit, at the right time |
 | Escalation owner | One observer or queue sees every silent turn; agents don't notify separately |
 | Closing | Usually take the last word, then mark the conversation done |
+| Reply language | The guest's own language (`response_language: Original`) |
+| Hours and delay | Autopilot at all hours, with a reply delay of a few seconds |
 
 ## 1. Persona layout
 
@@ -92,7 +94,19 @@ Never send status-only replies ("let me check", "we're looking into it") or repe
 - Enforce the operator's hard bans with a send-time check where your runtime allows, for example echoing a code, or admitting uncertainty under the default. Cover promises to find out ("I'll ask my cleaner and get back to you") as well as admissions; one operator's check caught only the second.
 - Make any automated or learning edit to instructions check deleted lines as well as added ones. Removing a "Do not" line is a change.
 
-## 7. Traps
+## 7. Behavior settings
+
+Conduit's Behavior tab decides whether, when and how the agent answers. Read each setting before blaming instructions.
+
+- **Escalation rules** hand matching messages to a person instead of the agent. They explain escalations the trace attributes to a rule. They are set in the app; ask the operator for them and record them as unchecked if you can't see them.
+- **Working hours** (`autopilot_schedule`): outside them autopilot falls back to copilot, so nothing sends.
+- **Reply language** (`response_language`): a fixed language answers every guest in it. `Original` answers in the guest's language.
+- **Reply delay** (`custom_response_delay_ms`): gives a teammate time to answer first. Too short and the agent races them into a double reply; too long and replies look slow.
+- **Auto mark-as-done** changes what "done" means, and with it the metrics.
+- **Hooks** run tools, HTTP calls, models or other agents before and after a run or tool call. They can change behavior invisibly; read them in the app or record them as unchecked.
+- **Voice agents** have their own prompt, escalation, schedule and tag settings. Keep their facts and rules in step with the chat agent's, or point both at the same knowledge.
+
+## 8. Traps
 
 - **Sender identity.** A guardrail that silenced the agent when "the owner" had replied also silenced it after its own API sends, which show the owner's name.
 - **Universal mandates.** "Always acknowledge every request" and "say you're checking" produced status spam.

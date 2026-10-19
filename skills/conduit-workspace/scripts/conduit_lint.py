@@ -4,8 +4,10 @@
 Finds configuration problems that repeatedly hurt Conduit agents: shared and
 global objects, personal or disconnected connections, unresolved @ references,
 credential-like text in prompts, oversized guardrails, restated paragraphs,
-orphan or disabled skills, and unscoped knowledge. Findings are hints to read
-in full, not verdicts.
+orphan or disabled skills, agents that never run or share an inbox, fixed
+reply languages, listing IDs in guardrails, urgent tags, inactive listings,
+listings with only their PMS article, duplicate articles and unscoped knowledge.
+Findings are hints to read in full, not verdicts.
 
 Examples:
   python3 conduit_lint.py /tmp/conduit-snap
@@ -50,6 +52,11 @@ def load(folder, name, default=None):
 
 
 MODES = {"autopilot", "copilot", "inactive"}
+LANGUAGES = {"English", "Original", "Spanish", "French", "German", "Italian", "Polish", "Portuguese", "Hebrew"}
+TRIGGER_TYPES = {"message", "webhook", "cron", "event", "mention", "manual"}
+CHANNELS = {"airbnb", "booking_com", "sms", "whatsapp", "messenger", "email", "unthreaded_email", "pms", "widget",
+            "instagram", "vrbo", "expedia", "helpdesk", "slack", "line_oa", "portal"}
+SCOPE_ID = re.compile(r"\b(?:group|unit):[A-Za-z0-9]")
 STATUSES = {"connected", "disconnected", "error", "expired", "pending", "revoked"}
 SOURCES = {"pms", "manual", "ingest", "link", "notion", "google_drive", "airtable"}
 
@@ -134,6 +141,31 @@ def verify_manifest(folder, manifest, agents, findings):
                 findings.add("high", "damaged-snapshot", rel, "changed since the snapshot was taken")
 
 
+def message_scopes(agent):
+    """Scopes of an agent's enabled message triggers: ("all",), ("inbox", id) or ("channel", type)."""
+    scopes = set()
+    for t in agent.get("triggers") or []:
+        if t.get("type") != "message" or not t.get("enabled"):
+            continue
+        config = t.get("config") or {}
+        kind = config.get("scope_type")
+        if kind == "inbox":
+            scopes.add(("inbox", str(config.get("inbox_type_id"))))
+        elif kind == "channel":
+            scopes.add(("channel", known(config.get("channel_type"), CHANNELS)))
+        else:
+            scopes.add(("all",))
+    return scopes
+
+
+def overlap(a, b):
+    return bool(a & b) or (("all",) in a and b) or (("all",) in b and a)
+
+
+def norm_title(title):
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", (title or "").lower()).split())
+
+
 def paragraphs(text):
     for part in re.split(r"\n\s*\n", text or ""):
         norm = " ".join(part.split())
@@ -161,9 +193,46 @@ def main():
     names = {a["id"]: a.get("name") or a["id"] for a in agents}
     wanted = set(args.agent or [])
     checked = [a for a in agents if not wanted or a["id"] in wanted or a.get("name") in wanted]
+    names_wanted = {names[a["id"]] for a in checked}
     if wanted and not checked:
         print("No agent matched --agent.", file=sys.stderr)
         return 2
+
+    listings = load(args.snapshot, "listings.json")
+    groups = load(args.snapshot, "listing-groups.json") or []
+    tags = load(args.snapshot, "conversation-tags.json")
+    listing_names = {str(l.get("listingId")): l.get("internalName") or l.get("name") or str(l.get("listingId"))
+                     for l in listings or [] if l.get("listingId")}
+    # Conduit listing refs (knowledge scope) map to PMS listing IDs only through listing groups.
+    ref_to_id, ref_active = {}, {}
+    for g in groups:
+        for m in g.get("listings") or []:
+            if m.get("listingRef"):
+                ref_to_id[str(m["listingRef"])] = str(m.get("listingId"))
+                ref_active[str(m["listingRef"])] = m.get("isActive")
+    id_to_ref = {v: k for k, v in ref_to_id.items()}
+    nodes = load(args.snapshot, "kb-nodes.json")
+    pms_title = {}
+    for n in nodes or []:
+        if n.get("source") == "pms":
+            for e in n.get("entity_ids") or []:
+                pms_title.setdefault(str(e), n.get("title"))
+    for ref, title in pms_title.items():
+        listing_names.setdefault(ref, title or ref)
+    for ref, lid in ref_to_id.items():
+        listing_names.setdefault(ref, listing_names.get(lid, ref))
+    # Long IDs only: a short numeric PMS ID could match digits inside a phone number or code.
+    listing_ids = [i for i in listing_names if len(i) >= 12]
+
+    # Two live agents listening to the same inbox answer the same guests.
+    live = [(names[a["id"]], message_scopes(a)) for a in agents
+            if a.get("enabled") is True and known(a.get("operation_mode"), MODES) in ("autopilot", "copilot")]
+    # An inbox-scoped and a channel-scoped trigger can still overlap; that pairing isn't checked.
+    for i, (n1, s1) in enumerate(live):
+        for n2, s2 in live[i + 1:]:
+            if s1 and s2 and overlap(s1, s2) and (not wanted or n1 in names_wanted or n2 in names_wanted):
+                findings.add("medium", "shared-inbox", f"{n1} / {n2}",
+                             "both have enabled message triggers on the same inbox, channel or all messages")
 
     consumers = defaultdict(list)
     for a in agents:
@@ -198,6 +267,18 @@ def main():
         enabled = a.get("enabled") if isinstance(a.get("enabled"), bool) else "unexpected value"
         if enabled and mode == "inactive":
             findings.add("info", "mode-vs-enabled", agent, "enabled is true but operation_mode is inactive", agent)
+        live_triggers = [t for t in a.get("triggers") or [] if t.get("enabled")]
+        trigger_types = sorted({known(t.get("type"), TRIGGER_TYPES) for t in live_triggers})
+        if enabled is True and mode in ("autopilot", "copilot"):
+            if not live_triggers:
+                findings.add("medium", "never-runs", agent, f"operation_mode {mode} but no enabled trigger; it never runs", agent)
+            elif "message" not in trigger_types:
+                findings.add("info", "no-message-trigger", agent,
+                             "answers no guest messages; enabled triggers: " + ", ".join(trigger_types), agent)
+        language = known(a.get("response_language"), LANGUAGES)
+        if a.get("response_language") is not None and language != "Original":
+            findings.add("policy", "fixed-reply-language", agent,
+                         f"replies in {language} whatever language the guest writes", agent)
 
         access = load(args.snapshot, f"agent-tools/{a['id']}.json", [])
         enabled_tools = {t["name"] for t in access if t.get("enabled")}
@@ -233,6 +314,12 @@ def main():
         for g in a.get("guardrails") or []:
             body = g.get("knowledge") or ""
             stack.append((f"guardrail: {g.get('title')}", body))
+            named = sorted({listing_names[i] for i in listing_ids if i in body})
+            if named or SCOPE_ID.search(body):
+                findings.add("medium", "listing-id-in-guardrail", g.get("title"),
+                             (f"names {len(named)} listing(s), first: {named[0]}; " if named else "holds a group: or unit: ID; ")
+                             + "guardrails load for every listing; put listing rules in scoped knowledge or a skill, "
+                             "and stop an agent for a listing with routing or listing state", agent)
             if len(body) > GUARDRAIL_LIMIT:
                 findings.add("medium", "oversized-guardrail", g.get("title"),
                              f"{len(body)} chars; a procedure here belongs in a Conduit skill", agent)
@@ -265,12 +352,30 @@ def main():
 
         summaries.append({
             "agent": agent, "mode": mode, "enabled": enabled, "model": a.get("model"),
+            "response_language": language, "triggers": trigger_types,
+            "autopilot_schedule": bool(a.get("autopilot_schedule")),
+            "reply_delay_ms": a.get("custom_response_delay_ms") if isinstance(a.get("custom_response_delay_ms"), int) else None,
             "persona_chars": len(a.get("instructions") or ""),
             "guardrails": len(a.get("guardrails") or []), "skills": len(attached),
             "tools_enabled": len(enabled_tools), "connection_tools": len(conn_tools),
         })
 
-    nodes = load(args.snapshot, "kb-nodes.json")
+    for t in tags or []:
+        if t.get("urgency_level") == "urgent":
+            count = t.get("count") if isinstance(t.get("count"), int) else "unknown"
+            findings.add("info", "urgent-tag", t.get("name"),
+                         f"stops the AI on every conversation it tags (count: {count}); confirm a person should own these")
+    inactive = [l for l in listings or [] if l.get("isActive") is False or l.get("active") is False]
+    if inactive:
+        sample = ", ".join(sorted(listing_names.get(str(l.get("listingId")), "listing") for l in inactive)[:10])
+        findings.add("info", "inactive-listings", f"{len(inactive)} listings",
+                     f"inactive in Conduit, so no agent runs for their guests; confirm that is intended (first: {sample})")
+    active_by_name = {}
+    for l in listings or []:
+        for k in ("internalName", "name", "publicName"):
+            if l.get(k):
+                active_by_name[l[k]] = not (l.get("isActive") is False or l.get("active") is False)
+
     kb = None
     if nodes is not None:
         content = [n for n in nodes if not n.get("is_directory")]
@@ -280,6 +385,37 @@ def main():
         for n in content:
             if n.get("embed_status") == "failed":
                 findings.add("medium", "kb-embed-failed", n.get("title"), "not searchable")
+        seen_titles = Counter((norm_title(n.get("title")), tuple(sorted(n.get("entity_ids") or [])))
+                              for n in content if n.get("enabled", True) is not False and n.get("title"))
+        for (title, scope), count in seen_titles.items():
+            if count > 1 and title:
+                findings.add("info", "duplicate-article", title[:80],
+                             f"{count} enabled articles with this title and the same scope; two versions of a fact?")
+        # A listing is covered by a non-PMS article scoped to it, to one of its units, or to a group it is in.
+        covered = set()
+        group_members = {str(g.get("groupId")): [str(m.get(k)) for m in g.get("listings") or []
+                                                 for k in ("listingRef", "listingId") if m.get(k)] for g in groups}
+        for n in content:
+            if n.get("enabled", True) is False or n.get("source") == "pms":
+                continue
+            for e in n.get("entity_ids") or []:
+                e = str(e)
+                if e.startswith("group:"):
+                    targets = group_members.get(e[6:], [])
+                elif e.startswith("unit:"):
+                    targets = [e.split(":")[1]]
+                else:
+                    targets = [e]
+                for t in targets:
+                    covered.update({t, ref_to_id.get(t, t), id_to_ref.get(t, t)})
+        for ref, title in pms_title.items():
+            active = ref_active.get(ref)
+            if active is None:
+                active = active_by_name.get(title)
+            if ref not in covered and active is not False:
+                findings.add("medium", "pms-only-listing", title or ref,
+                             "its only knowledge is the PMS article: no property or access facts of its own"
+                             + ("" if active else " (active state unknown)"))
         per_entity = Counter(e for n in content for e in (n.get("entity_ids") or []))
         kb = {
             "content_nodes": len(content), "workspace_wide": len(unscoped),
@@ -288,6 +424,9 @@ def main():
             "entities": len(per_entity),
             "entities_with_one_node": sum(1 for c in per_entity.values() if c == 1),
         }
+    listing_summary = None
+    if listings is not None:
+        listing_summary = {"listings": len(listings), "inactive": len(inactive), "groups": len(groups)}
 
     totals = Counter()
     for (check, severity), n in findings.counts.items():
@@ -296,6 +435,8 @@ def main():
         "snapshot": os.path.abspath(args.snapshot),
         "agents": summaries,
         "knowledge": kb,
+        "listings": listing_summary,
+        "not_exported": (load(args.snapshot, "manifest.json") or {}).get("skipped"),
         "totals": dict(sorted(totals.items())),
         "findings": findings.items,
     }, indent=1))
