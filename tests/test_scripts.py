@@ -189,6 +189,9 @@ check("thanks again is not a follow-up", "guest_followed_up" not in fail.signals
     [msg(10, "outbound", "Towels are in the closet.", "agent", True), msg(9, "inbound", "Thanks again!")], now, 24))
 check("directions are not a promise", "unkept_promise" not in fail.signals(
     [msg(60, "outbound", "On the way in, turn left at the gate.", "agent", True)], now, 24))
+check("operator automation sends not teammates", fail.signals(
+    [{"created_at": at(10), "direction": "outbound", "body": "Check-in details are ready", "sender": {"type": "user", "user_id": "bot1"}}],
+    now, 24, automated=frozenset({"bot1"})) == set())
 check("copilot teammate sends not flagged", fail.signals([msg(10, "outbound", "Sure!", "user")], now, 24, copilot=True) == set())
 check("stay score is its own signal", fail.score_signals({"stay_quality_score": 1}) == {"low_stay_score"})
 check("0-1 scale score not treated as low", fail.score_signals({"support_service_quality_score": 0.4}) == set())
@@ -231,6 +234,7 @@ class FakeApi(snap.Client):
 recent = datetime.now(timezone.utc) - timedelta(days=2)
 secret_body = "Gate code 482913, guest Jane Doe +1 503 555 0100 asked again??"  # check:allow (fabricated)
 routes = [
+    ("/v1/workspaces/w1/settings", {"data": {"timezone": "America/Los_Angeles"}}),
     ("/v1/workspaces", {"data": [{"id": "w1", "name": "W"}]}),
     ("/v1/agents/a1/runs", {"data": [
         {"id": "r1", "contact_id": "c1", "disposition": "escalated", "status": "completed", "created_at": iso(recent)},
@@ -240,7 +244,8 @@ routes = [
         {"id": "r0", "contact_id": "c9", "disposition": "escalated", "status": "completed", "created_at": "2020-01-01T00:00:00Z"}],
         "has_more": False}),
     ("/v1/agents", {"data": [{"id": "a1", "name": "Guest Agent", "triggers": [{"type": "message", "enabled": False}]},
-                             {"id": "a2", "name": "Notifier", "triggers": [{"type": "cron", "enabled": True}]}], "has_more": False}),
+                             {"id": "a2", "name": "Notifier", "triggers": [{"type": "cron", "enabled": True}]},
+                             {"id": "a3", "name": "Skipped", "triggers": [{"type": "message", "enabled": True}]}], "has_more": False}),
     ("/v1/escalations", lambda q: {"data": [{"id": "e-" + q["status"], "contact_id": "c1", "agent_id": "a1",
                                             "status": q["status"], "created_at": iso(recent),
                                             "guest_message": secret_body, "questions_for_operator": "Parking?"}]
@@ -254,7 +259,8 @@ routes = [
          "sender": {"type": "user"}, "is_sent_by_autopilot": False}], "has_more": False}),
     ("/v1/insights/", {"data": {"numerator": 9, "denominator": 10, "rate": 0.9, "formula_version": "f1"}}),
 ]
-args = type("A", (), dict(workspace=None, days=30, agent=None, all_agents=False, sample=5, max_conversations=10, repeat_hours=24,
+args = type("A", (), dict(workspace=None, days=30, agent=None, all_agents=False, skip_agent=["Skipped"], automated_user=None, sample=5,
+                           max_conversations=10, repeat_hours=24,
                            calls=False, max_pages=5))()
 api = FakeApi(routes)
 with tempfile.TemporaryDirectory() as d:
@@ -278,6 +284,26 @@ with tempfile.TemporaryDirectory() as d:
     check("failures: runs without a contact counted", summary["runs_without_contact"] == 2)
     check("failures: notifier agent skipped by default", not any(p.startswith("/v1/agents/a2") for m, p, q in api.asked))
     check("failures: summary serializes with a run that has no disposition", json.dumps(summary, sort_keys=True) is not None)
+    check("failures: skipped agent not read", not any(p.startswith("/v1/agents/a3") for m, p, q in api.asked))
+    check("failures: rate dates use the workspace timezone", summary["window"]["timezone"] == "America/Los_Angeles")
+    check("failures: outbound sender types counted", summary["outbound_by_sender_type"].get("user", 0) >= 1)
+    check("failures: repeated user texts counted, not printed", isinstance(summary["repeated_user_texts"], int))
+
+day1, day2 = datetime.now(timezone.utc) - timedelta(days=3), datetime.now(timezone.utc) - timedelta(days=5)
+spread_routes = [r for r in routes if not r[0].startswith(("/v1/agents", "/v1/escalations"))] + [
+    ("/v1/agents/a1/runs", {"data": [
+        {"id": "s1", "contact_id": "d1a", "disposition": "escalated", "status": "completed", "created_at": iso(day1)},
+        {"id": "s2", "contact_id": "d1b", "disposition": "escalated", "status": "completed", "created_at": iso(day1 - timedelta(minutes=5))},
+        {"id": "s3", "contact_id": "d1c", "disposition": "unresolved", "status": "completed", "created_at": iso(day1 + timedelta(minutes=5))},
+        {"id": "s4", "contact_id": "d2a", "disposition": "escalated", "status": "completed", "created_at": iso(day2)}], "has_more": False}),
+    ("/v1/agents", {"data": [{"id": "a1", "name": "Guest Agent", "triggers": [{"type": "message"}]}], "has_more": False}),
+    ("/v1/escalations", {"data": [], "has_more": False}),
+]
+spread_args = type("A", (), {**{k: v for k, v in vars(type(args)).items() if not k.startswith("__")}, "max_conversations": 2, "sample": 0})()
+with tempfile.TemporaryDirectory() as d:
+    fail.collect(FakeApi(spread_routes), spread_args, d, {})
+    read = [c["contact_id"] for c in json.load(open(os.path.join(d, "cases.json"))) if not c.get("not_read")]
+    check("failures: budget spread across days, escalations before open-for-team runs", sorted(read) == ["d1a", "d2a"])
 
 # conduit_snapshot.py optional exports
 skipped = {}
@@ -301,13 +327,15 @@ with tempfile.TemporaryDirectory() as d:
                                                            "config": {"scope_type": "inbox", "inbox_type_id": "i1"}}],
          "guardrails": [{"title": "Cabin rule", "knowledge": f"For listing {lid} never mention the hot tub."}]},
         {"id": "a2", "name": "Copy", "enabled": True, "operation_mode": "copilot", "response_language": "Original",
-         "instructions": "", "skill_ids": [], "guardrails": [],
+         "instructions": "If the stay is unclear, call search_chat_history first.", "skill_ids": [], "guardrails": [],
          "triggers": [{"type": "message", "enabled": True, "config": {"scope_type": "inbox", "inbox_type_id": "i1"}}]},
         {"id": "a3", "name": "Idle", "enabled": True, "operation_mode": "autopilot", "instructions": "", "skill_ids": [],
          "guardrails": [], "triggers": [{"type": "cron", "enabled": False}]},
     ]
     json.dump(agents, open(os.path.join(d, "agents.json"), "w"))
     json.dump([], open(os.path.join(d, "skills.json"), "w"))
+    os.makedirs(os.path.join(d, "agent-tools"))
+    json.dump([{"name": "search_chat_history", "enabled": False}], open(os.path.join(d, "agent-tools", "a2.json"), "w"))
     json.dump([{"listingId": lid, "internalName": "Cedar Cabin", "isActive": True},
                {"listingId": "L2xxxxxx", "internalName": "Pine", "isActive": True},
                *[{"listingId": f"L{i}cover0", "internalName": f"Cover {i}", "isActive": True} for i in range(4, 8)],
@@ -321,13 +349,14 @@ with tempfile.TemporaryDirectory() as d:
                {"title": "Bldg A (PMS)", "source": "pms", "entity_ids": ["refBldgA"]},
                {"title": "Building access and Wi-Fi", "entity_ids": ["group:g1"]},
                {"title": "Studio retired (PMS)", "source": "pms", "entity_ids": ["refOld"]},
-               *[{"title": f"Cover {i} notes", "entity_ids": [f"L{i}cover0"]} for i in range(4, 8)]],
+               *[{"title": f"Cover {i} notes", "entity_ids": [f"L{i}cover0"],
+                  "body": "Supply closet keypad code 739184 for the kitchen."} for i in range(4, 8)]],
               open(os.path.join(d, "kb-nodes.json"), "w"))
     r = subprocess.run([sys.executable, "-I", "-B", os.path.join(SKILL, "scripts", "conduit_lint.py"), d],
                        capture_output=True, text=True)
     got = {i["check"] for i in json.loads(r.stdout)["findings"]} if r.returncode == 0 else set()
     for name in ("never-runs", "shared-inbox", "fixed-reply-language", "listing-id-in-guardrail", "urgent-tag",
-                 "inactive-listings", "duplicate-article", "pms-only-listing"):
+                 "inactive-listings", "duplicate-article", "pms-only-listing", "unavailable-tool-named"):
         check(f"lint flags {name}", name in got)
     check("pms-only listing named by its article", any(i["check"] == "pms-only-listing" and i["object"] == "Studio (PMS)"
                                                        for i in json.loads(r.stdout)["findings"]))
@@ -336,6 +365,11 @@ with tempfile.TemporaryDirectory() as d:
     check("listing with its own article not pms-only", not any(i["check"] == "pms-only-listing" and i["object"] == "Pine (PMS)"
                                                                 for i in json.loads(r.stdout)["findings"]))
     check("lint never prints guardrail text", "hot tub" not in r.stdout)
+    check("lint flags a code shared across listings", "shared-code-in-knowledge" in got)
+    check("lint never prints the shared code", "739184" not in r.stdout)
+f3 = lint.Findings(10)
+lint.scan_text(f3, "a", "guardrail: x", "If unsure, say you do not have that information yet.")
+check("uncertainty check catches 'do not have that information'", any(i["check"] == "uncertainty-allowed" for i in f3.items))
 
 # evals/cases.json, when this checkout has it
 cases_path = os.path.join(SKILL, "..", "..", "evals", "cases.json")

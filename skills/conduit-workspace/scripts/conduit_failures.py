@@ -33,6 +33,11 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python < 3.9
+    ZoneInfo = None
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conduit_snapshot import ApiError, Client, IncompleteExport, write  # noqa: E402
 
@@ -52,7 +57,8 @@ NEEDS_REPLY = re.compile(r"(?i)\?|\b(help|broken|locked out|not working|can'?t|c
 LOW_SCORE = 2
 SERVICE_SCORES = ("customer_sentiment_score", "support_service_quality_score")
 SCORES = SERVICE_SCORES + ("stay_quality_score",)
-SEVERE = ("run_failed", "run_escalated", "run_escalation_and_answer", "run_unresolved", "run_not_sent",
+# run_unresolved and run_no_op are often an agent's normal "leave it for the team" outcome, so they rank last.
+SEVERE = ("run_failed", "run_escalated", "run_escalation_and_answer", "run_not_sent",
           "escalation_pending", "escalation_reviewed", "escalation_resolved", "escalation_dismissed",
           "proposal_dismissed", "proposal_edited")
 
@@ -109,10 +115,11 @@ def in_window(client, path, query, since, max_pages):
     return items, more and window_open
 
 
-def signals(messages, now, repeat_hours, copilot=False):
+def signals(messages, now, repeat_hours, copilot=False, automated=frozenset()):
     """Signal names for one conversation's messages (any order). Reads bodies; returns names only.
 
     With copilot=True, teammate messages are skipped: approved copilot drafts are sent by people.
+    Messages from user IDs in `automated` are the operator's own automations, not teammates.
     """
     msgs = sorted(messages, key=lambda m: parse_time(m.get("created_at")) or now)
     found = set()
@@ -134,7 +141,7 @@ def signals(messages, now, repeat_hours, copilot=False):
                            and (parse_time(x.get("created_at")) or now) - when <= window for x in later)
                 if not kept and now - when > window:
                     found.add("unkept_promise")
-        elif outbound and sender == "user" and not copilot:
+        elif outbound and sender == "user" and not copilot and (m.get("sender") or {}).get("user_id") not in automated:
             found.add("teammate_after_ai" if ai_seen else "teammate_reply")
     if msgs and msgs[-1].get("direction") == "inbound" and NEEDS_REPLY.search(msgs[-1].get("body") or ""):
         last = parse_time(msgs[-1].get("created_at")) or now
@@ -176,6 +183,13 @@ def called_after(messages, calls, repeat_hours, now):
     return False
 
 
+SENDER_TYPES = {"contact", "user", "agent", "workflow", "external", "unknown"}
+
+
+def known_sender(value):
+    return value if value in SENDER_TYPES else "unknown"
+
+
 def iso(when):
     return when.isoformat().replace("+00:00", "Z")
 
@@ -201,6 +215,8 @@ def collect(client, args, out, manifest):
     elif not args.all_agents:
         # Guest-answering agents have a message trigger, enabled or not; notifiers and schedulers don't.
         agents = [a for a in agents if any(t.get("type") == "message" for t in a.get("triggers") or [])]
+    skip = set(args.skip_agent or [])
+    agents = [a for a in agents if a["id"] not in skip and a.get("name") not in skip]
     names = {a["id"]: a.get("name") or a["id"] for a in agents}
 
     cases, run_counts, no_contact, capped = {}, Counter(), 0, []
@@ -244,9 +260,19 @@ def collect(client, args, out, manifest):
                 c["signals"].add("escalation_" + str(e.get("status")))
                 c["latest"] = max(filter(None, [c["latest"], e.get("created_at")]), default=None)
 
-    # Escalations and failed runs before conversations whose only signal is a silent turn, newest first within each.
-    failing = sorted((c for c in cases.values() if c["signals"]), key=lambda c: c["latest"] or "", reverse=True)
-    failing.sort(key=lambda c: 0 if c["signals"] & set(SEVERE) else 1)
+    # Escalations and failed runs before conversations whose only signals are silent or open-for-the-team runs.
+    # Within each tier, take the newest case of each day in turn, so one busy day can't use up the budget.
+    def spread(tier):
+        by_day = {}
+        for c in sorted(tier, key=lambda c: c["latest"] or "", reverse=True):
+            by_day.setdefault((c["latest"] or "")[:10], []).append(c)
+        days, out = [by_day[d] for d in sorted(by_day, reverse=True)], []
+        while any(days):
+            out += [d.pop(0) for d in days if d]
+        return out
+    flagged = [c for c in cases.values() if c["signals"]]
+    failing = spread([c for c in flagged if c["signals"] & set(SEVERE)]) + \
+        spread([c for c in flagged if not c["signals"] & set(SEVERE)])
     # Sample resolved conversations old enough for a follow-up, a call or an unkept promise to have shown.
     settled = iso(now - timedelta(hours=args.repeat_hours))
     resolved = sorted((c for c in cases.values() if not c["signals"] and (c["latest"] or "") < settled),
@@ -256,7 +282,7 @@ def collect(client, args, out, manifest):
     skipped = {"failing_not_read": max(0, len(failing) - args.max_conversations),
                "resolved_not_sampled": len(resolved) - sampled}
 
-    errors = Counter()
+    errors, sender_types, user_texts = Counter(), Counter(), Counter()
     for c in planned:
         try:
             looked = client.request("GET", "/v1/conversations/lookup",
@@ -275,7 +301,14 @@ def collect(client, args, out, manifest):
                     messages += data
                     truncated = more
             c["messages_read"], c["truncated"] = len(messages), truncated
-            c["signals"] |= signals(messages, now, args.repeat_hours, copilot=c.get("copilot", False))
+            for m in messages:
+                if m.get("direction") == "outbound":
+                    kind = known_sender((m.get("sender") or {}).get("type"))
+                    sender_types[kind] += 1
+                    if kind == "user" and m.get("body"):
+                        user_texts[" ".join(m["body"].split()).lower()] += 1
+            c["signals"] |= signals(messages, now, args.repeat_hours, copilot=c.get("copilot", False),
+                                    automated=frozenset(args.automated_user or []))
             if args.calls:
                 calls = client.request("GET", f"/v1/contacts/{c['contact_id']}/calls",
                                        {**q, "limit": 50, "order": "desc"}).get("data")
@@ -290,7 +323,14 @@ def collect(client, args, out, manifest):
             errors["incomplete messages"] += 1
             c["read_error"] = str(err)
 
-    start, end = since.date().isoformat(), now.date().isoformat()
+    zone, zone_name = timezone.utc, "UTC"
+    try:
+        tz = (client.request("GET", f"/v1/workspaces/{workspace}/settings").get("data") or {}).get("timezone")
+        if tz and ZoneInfo:
+            zone, zone_name = ZoneInfo(tz), tz
+    except (ApiError, KeyError, ValueError):
+        pass
+    start, end = since.astimezone(zone).date().isoformat(), now.astimezone(zone).date().isoformat()
     rates = {}
     for name in ("automation_rate", "resolution_rate"):
         try:
@@ -312,19 +352,22 @@ def collect(client, args, out, manifest):
     write(out, "cases.json", kept, manifest)
     write(out, "escalations.json", escalations, manifest)
     write(out, "rates.json", {"start_date": start, "end_date": end, "scope": "whole workspace",
-                              "dates": "UTC calendar days", **rates}, manifest)
+                              "dates": f"calendar days in {zone_name}", **rates}, manifest)
 
     signal_counts = Counter(s for c in read for s in c["signals"])
     listings = Counter(c.get("listing_id") for c in read if c["signals"] and c.get("listing_id"))
     auto = rates.get("automation_rate") or {}
     return {
-        "workspace_id": workspace, "window": {"start": start, "end": end, "days": args.days},
+        "workspace_id": workspace, "window": {"start": start, "end": end, "days": args.days, "timezone": zone_name},
         "agents": len(agents), "runs": dict(run_counts), "runs_without_contact": no_contact,
         "escalations": dict(Counter(str(e.get("status")) for e in escalations)),
         "escalations_with_operator_question": sum(bool(e.get("questions_for_operator")) for e in escalations),
         "conversations_with_failure_signals": len(failing), "conversations_read": len(read),
         "not_read": skipped, "read_errors": dict(errors),
         "page_cap_reached": capped,
+        "outbound_by_sender_type": dict(sender_types),
+        # The same text sent as a "user" in several conversations is likely an automation, not a teammate.
+        "repeated_user_texts": sum(1 for n in user_texts.values() if n >= 3),
         "signals": dict(signal_counts.most_common()),
         "listings_with_most_cases": [{"listing_id": k, "cases": v} for k, v in listings.most_common(10)],
         "workspace_automation_rate": {k: auto.get(k) for k in ("numerator", "denominator", "rate", "formula_version")
@@ -340,6 +383,10 @@ def main():
     parser.add_argument("--agent", action="append",
                         help="agent name or ID (repeatable); default every agent with a message trigger")
     parser.add_argument("--all-agents", action="store_true", help="include agents without a message trigger")
+    parser.add_argument("--automated-user", action="append",
+                        help="user ID whose messages are the operator's own automations, not a teammate (repeatable)")
+    parser.add_argument("--skip-agent", action="append",
+                        help="agent name or ID to leave out (repeatable), for protected or out-of-scope agents")
     parser.add_argument("--sample", type=int, default=100,
                         help="resolved conversations to check for outcome signals (default 100)")
     parser.add_argument("--max-conversations", type=int, default=300,
@@ -348,7 +395,7 @@ def main():
                         help="hours after an AI reply in which a guest follow-up counts against it, and after a guest "
                              "message in which a call does (default 24)")
     parser.add_argument("--calls", action="store_true", help="also read each contact's calls (one request per contact)")
-    parser.add_argument("--max-pages", type=int, default=50, help="page cap per list (default 50 pages of 100)")
+    parser.add_argument("--max-pages", type=int, default=100, help="page cap per list (default 100 pages of 100)")
     parser.add_argument("--min-interval", type=float, default=1.0,
                         help="seconds between requests (default 1.0); the rate limit is shared with live guest traffic")
     args = parser.parse_args()

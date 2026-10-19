@@ -39,7 +39,7 @@ Use when <concrete triggers, including follow-ups to the same issue>.
 1. Use injected context; look up only what is missing.
 2. Confirm <reservation, listing, status, dates, booking source>. Never ask the guest which channel.
 3. Call @<tool> with exact IDs and the guest's full latest message.
-4. For static facts, search knowledge once, scoped to this listing. A weak result is final; omission means unknown.
+4. For static facts, search knowledge once, scoped to this listing. Don't search again after a weak result. A fact the search didn't return is unknown, not absent: never deny it.
 
 ## Decide from the result
 - `<value_a>`: <what to convey>; <permitted action>.
@@ -127,6 +127,7 @@ Before the backend ships, write skills that behave correctly with both the old a
 **Workflows**
 - Creates and updates are drafts unless activated, and every update is a new version. Check the active version, not `enabled`.
 - Run drift checks and activation as separate steps.
+- An active workflow with no trigger never runs. Archive it, or find out what it was meant to do.
 - Read the workflow schema before writing. Switch-off and trigger semantics differ by version.
 - Proactive "ready" or offer messages need a real event, not a calendar gap.
 - Track every automated send in an outbox: pending, dispatched, delivered, suppressed or failed. Claim each event once before dispatch.

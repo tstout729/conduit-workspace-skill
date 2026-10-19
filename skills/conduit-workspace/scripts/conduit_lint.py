@@ -34,7 +34,10 @@ CODE_NEAR = re.compile(
 )
 HARDCODED_SECRET = re.compile(r"(?i)(bearer\s+[a-z0-9._\-]{24,}|(?:api[_-]?key|secret|token)\s*[:=]\s*['\"][^'\"]{16,}['\"])")
 UNCERTAINTY = re.compile(
-    r"(?i)(admission of uncertainty|admit(?:ting)? (?:that )?(?:you|it|i) (?:don't|do not) know|say (?:plainly )?(?:that )?(?:you're|you are|i'm|i am) not sure)"
+    r"(?i)(admission of uncertainty|admit(?:ting)? (?:that )?(?:you|it|i) (?:don't|do not) know|"
+    r"say (?:plainly )?(?:that )?(?:you're|you are|i'm|i am) not sure|"
+    r"(?:you|i|we) (?:don't|do not) have (?:that|this|the) information|say so honestly|"
+    r"(?:tell|let) (?:the guest|them) (?:know )?(?:that )?(?:you(?:'re| are)|we(?:'re| are)) (?:checking|looking into))"
 )
 GUARDRAIL_LIMIT = 3000
 PERSONA_LIMIT = 20000
@@ -98,7 +101,7 @@ def scan_text(findings, agent, label, text, is_code=False):
                          f"secret-like value at character {m.start()}; inspect the private snapshot", agent)
     for m in UNCERTAINTY.finditer(text):
         findings.add("policy", "uncertainty-allowed", label,
-                     f"text at character {m.start()} lets the agent tell guests it doesn't know; "
+                     f"text at character {m.start()} lets the agent tell guests it doesn't know or is checking; "
                      "fine only if the operator chose that", agent)
 
 
@@ -342,6 +345,12 @@ def main():
                     detail = (f"@-mention at character {offset} matches no known tool or skill "
                               "(it may be a workflow, listing or status mention); read it in the snapshot")
                 findings.add("medium", "unresolved-reference", label, detail, agent)
+            for name in sorted(n for n in known_names if n and ("-" in n or "_" in n) and len(n) >= 6):
+                if name in skill_names or name in enabled_tools or name in global_tools or name in conn_tools:
+                    continue
+                if re.search(r"(?<![\w@-])" + re.escape(name) + r"(?![\w-])", text):
+                    findings.add("medium", "unavailable-tool-named", label,
+                                 f"names {name} without @, but this agent can't use it", agent)
             for p in paragraphs(text):
                 para_owners[p].add(label)
         repeats = sorted(((len(o), p, o) for p, o in para_owners.items() if len(o) > 1), reverse=True)
@@ -385,6 +394,21 @@ def main():
         for n in content:
             if n.get("embed_status") == "failed":
                 findings.add("medium", "kb-embed-failed", n.get("title"), "not searchable")
+        # The same code in many listings' articles may open more than one home (bodies only with --kb-bodies).
+        code_listings = defaultdict(set)
+        for n in content:
+            if n.get("enabled", True) is False:
+                continue
+            listings_of = {str(e) for e in n.get("entity_ids") or [] if not str(e).startswith("group:")}
+            for m in CODE_NEAR.finditer(n.get("body") or ""):
+                if not year_like(m.group(2)):
+                    code_listings[m.group(2)] |= listings_of
+        shared = sorted((len(v), v) for v in code_listings.values() if len(v) >= 3)
+        for i, (count, ids) in enumerate(reversed(shared), 1):
+            first = ", ".join(sorted(listing_names.get(e, e) for e in ids)[:3])
+            findings.add("high", "shared-code-in-knowledge", f"code {i}",
+                         f"the same code appears in articles for {count} listings (first: {first}); "
+                         "confirm it opens nothing outside each home before any agent serves it")
         seen_titles = Counter((norm_title(n.get("title")), tuple(sorted(n.get("entity_ids") or [])))
                               for n in content if n.get("enabled", True) is not False and n.get("title"))
         for (title, scope), count in seen_titles.items():

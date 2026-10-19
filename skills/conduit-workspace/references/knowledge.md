@@ -8,7 +8,7 @@ Contents: 1. Sources · 2. A complete listing · 3. Access and credentials · 4.
 
 Start with what the operator already keeps. Ask where their facts live, then list what you can reach:
 
-- **Conduit's synced sources first.** Conduit can import and re-sync the PMS, Notion, Google Drive and Airtable (MCP `list_knowledge_sources`; knowledge nodes carry `source`). When a fact already lives in a synced source, fix it there and let it re-sync, or ask the operator to. Never write a manual article beside it: two versions of a fact is the most common cause of inconsistent answers.
+- **Conduit's synced sources first.** Conduit can import and re-sync the PMS, Notion, Google Drive and Airtable (MCP `list_knowledge_sources`; knowledge nodes carry `source`). When a fact already lives in a synced source, fix it there and let it re-sync, or ask the operator to. Don't write a manual article beside it unless the operator approves a documented override (section 6): two versions of a fact is the most common cause of inconsistent answers.
 - **The operator's other sources**, through whatever connectors you have: Notion, a wiki or second brain, Google Sheets or Drive, the PMS, a folder of property notes.
 
 Search them for each gap before asking anyone, and note which source each fact came from. Use them in this order:
@@ -27,7 +27,7 @@ Err toward more information. A knowledge base that is too thin causes lockouts a
 
 **Record where each fact came from.** For each fact you copy, keep the source, the page or row, and the source's last-edited time in your working notes. On the next loop run, re-read those sources. When one changed, update Conduit or ask.
 
-**Ask for the rest.** When no source has a fact, or two sources disagree, don't guess. Collect these into one short list for the operator: one question per fact, grouped by listing, each answerable in a few words ("Pine Cottage: can guests park on the street?"). Keep them in one open-questions file in the operator's working folder: the question, the listing, the date asked, and later the answer and who gave it. Never re-ask an answered question; carry unanswered ones into the next short list. Write each answer to the operator's canonical source first, then to Conduit (section 6), so the next run finds it.
+**Ask for the rest.** When no source has a fact, or two sources disagree, don't guess. Collect these into one short list for the operator: one question per fact, grouped by listing, each answerable in a few words ("Pine Cottage: can guests park on the street?"). Keep them in the operator's existing open-questions list if they have one, otherwise in one open-questions file in their working folder: the question, the listing, the date asked, and later the answer and who gave it. Never re-ask an answered question; carry unanswered ones into the next short list. Write each answer to the operator's canonical source first, then to Conduit (section 6), so the next run finds it.
 
 ## 2. A complete listing
 
@@ -55,7 +55,7 @@ Conduit's listing scope controls which listing's search sees an article. It does
 
 **Keep out of knowledge:** live lock or device status, prices (the PMS owns them), agent behavior ("notify the team", "tell the guest X"), and internal language.
 
-Score each listing Present, Vague or Absent per fact by reading the full articles. Count a fact only if the guest can reach and act on it.
+Score each listing Present, Vague or Absent per fact by reading the full articles. Count a fact only if the guest can reach and act on it. For a large fleet, screen first with keyword checks per fact across every listing, then read in full only the listings that screen Absent or Vague, and say which counts came from keywords.
 
 ## 3. Access and credentials
 
@@ -65,14 +65,14 @@ Score each listing Present, Vague or Absent per fact by reading the full article
 - Never serve another home's code. Isolate homes by the codes recorded for each one, not by address grouping. Compare against smart-lock codes, mechanical keypads, spare boxes, staff and master codes, and codes written in words. If the code inventory can't be read, fail closed.
 - Keep master and staff codes out of articles. If the operator allows a last-resort code, issue one per home from a gated tool. Never issue a code that opens other homes or staff areas.
 - When you find a code in prompt text, check what else it opens before moving it anywhere. A "laundry code" can turn out to be a master code.
-- Publish only codes that work on the physical lock today. Listing variants that share a lock share its code. For a lockout, read the lock's history (MCP `get_device_history`, when the lock is connected) before blaming knowledge: a code that was never set is a process cause.
+- Publish only codes that work on the physical lock today, and Wi-Fi details confirmed at the home (field notes, the router's label, a teammate on site), not copied from an old document. Listing variants that share a lock share its code. For a lockout, read the lock's history (MCP `get_device_history`, when the lock is connected) before blaming knowledge: a code that was never set is a process cause.
 - Keep credentials out of transcripts and outside graders. Write code-bearing articles with a script, mask previews, and use keyed hashes for comparisons.
 - Keep a non-AI path for access details (portal or scheduled message), so entry never depends on the agent.
 
 ## 4. Scope and structure
 
 - Set `entity_ids` on every content node: a listing ID, `group:<id>` or `unit:<listingId>:<subunitId>`. An empty list is workspace-wide and reaches every listing's search. Folders can't carry scope.
-- The listing ID here is Conduit's own (`listingRef` on a listing group's members, and the ID already on the listing's PMS article), not the PMS listing ID the listings catalog returns. Copy it from the PMS article's `entity_ids`. An article scoped to the PMS ID reaches no listing.
+- The listing ID here is Conduit's own (`listingRef` on a listing group's members, and the ID already on the listing's PMS article), not the `listingId` the listings catalog returns (usually the PMS's ID). Copy it from the PMS article's `entity_ids`. An article scoped to the wrong ID reaches no listing.
 - Use the operator's existing article structure. One working pattern: property information plus access, next to the PMS article. Split a topic out when that improves retrieval.
 - Keep one fact in one maintained place. Two versions of a fact is the most common cause of inconsistent answers.
 - Give every bookable variant (reduced-bedroom, combined, sub-unit) complete scoped coverage. Reuse shared articles through scope where you can; write only the differences separately. A variant with only its PMS article answers badly.
@@ -124,7 +124,7 @@ Conduit's node PATCH has no conditional write. Re-fetch the node and compare `up
 - Test through the agent's own listing-scoped search. An admin token may not see restricted articles, so an admin miss proves nothing.
 - Ask one fact per query.
 - `POST /v1/kb/search` returns chunks (at most 50), not whole articles. Compact listing and amenity tools truncate. Absence in a search result is not absence in the home.
-- Treat a weak match as final in instructions. Don't tell the agent to re-search.
+- In instructions, tell the agent not to search again after a weak match, and to treat what it didn't find as unknown, never as absent. Before you, not the agent, conclude a home lacks something, read its full articles.
 - After edits, check scoped queries for stale contradictions and for facts leaking from other listings.
 
 ## 9. Other places facts live
@@ -136,4 +136,6 @@ Guests read facts from more than the agent. A wrong or confusing fact in any of 
 - workflow, scheduled and template messages (`GET /v1/workspaces/{id}/workflows`, WhatsApp templates);
 - PMS automated messages and saved replies.
 
-When a guest's question follows one of these messages, read it before blaming knowledge. When you change a fact, search these places for the old value and make every copy agree with the canonical source. Changing a guest-facing message needs the same authorization as any other live change.
+When a guest's question follows one of these messages, read it before blaming knowledge. Then check which value is right for this stay: an approved early check-in, a timing exception or the stay's own access window can make the other message right and the agent wrong.
+
+When you change a fact, search these places for the old value and make every copy agree with the canonical source. List the upcoming guests who already received the wrong value; whether they get a correction is the operator's call, because it is a guest message. Changing a guest-facing message needs the same authorization as any other live change.

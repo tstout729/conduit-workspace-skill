@@ -7,7 +7,8 @@ Contents: 1. Access · 2. Endpoints · 3. Write semantics · 4. Snapshot, apply,
 ## 1. Access
 
 - REST base: `https://api.conduit.ai/v1`, with `Authorization: Bearer <token>`. Most routes need `workspace_id`; list workspaces with `GET /v1/workspaces`.
-- MCP: `https://api.conduit.ai/v1/mcp`. It may expose only `search_tools` and `call_tool`; discover the catalog each session. Some operations exist only in MCP.
+- MCP: `https://api.conduit.ai/v1/mcp`. It may expose only `search_tools` and `call_tool`; discover the catalog each session. Some operations exist only in MCP. If the MCP server isn't attached to your session, call it over HTTP with the same token: JSON-RPC `initialize`, then `tools/call` on `search_tools` and `call_tool`, passing back the `Mcp-Session-Id` header.
+- The scripts read `CONDUIT_API_TOKEN` from the environment. If it isn't set, ask the operator where the token is kept; never print it or write it to a file.
 - REST and MCP take different argument names for similar operations. One integration failed half its knowledge searches on a wrong argument name. Check each schema.
 - Current references: `https://docs.conduit.ai/llms.txt` and `https://docs.conduit.ai/api-reference/openapi.json`.
 - Product versions change field names and labels. Never write from memory.
@@ -24,10 +25,10 @@ Contents: 1. Access · 2. Endpoints · 3. Write semantics · 4. Snapshot, apply,
 | Integration tools | `GET /v1/agents/{id}/connections` (not in the tools list) |
 | Custom tools | `/v1/custom-tools`, `/v1/custom-tools/{id}`, `GET /v1/custom-tools/runtimes`, `POST …/{id}/run` |
 | Knowledge | `POST /v1/kb/nodes/search` (inventory), `GET/PATCH/DELETE /v1/kb/nodes/{id}`, `POST /v1/kb/search` (semantic chunks) |
-| Runs | `GET /v1/agents/{id}/runs` (filters by `status` only; disposition, `contact_id`, `conversation_id` per run), `GET …/runs/{run_id}`; MCP `get_agent_trace` |
+| Runs | `GET /v1/agents/{id}/runs` (filters by `status` only; disposition, `contact_id`, `conversation_id` per run), `GET …/runs/{run_id}` (its `tool_trace` can be empty); MCP `get_agent_trace` (tool calls, cut short) |
 | Conversations | `GET /v1/conversations` (`updated_after`), `GET /v1/conversations/lookup?contact_id` (a conversation ID works too: reservation and listing, `ai_paused`, `sentiment`, 1–5 quality scores), `GET /v1/conversations/{id}/messages` (`sender.type`: contact, user, agent, workflow, external, unknown; `is_sent_by_autopilot`) |
 | Contacts and calls | `GET /v1/contacts/{id}/reservations`, `GET /v1/contacts/{id}/calls`, `GET /v1/calls`, `GET /v1/calls/{id}`; `POST /v1/contacts/{id}/pause-ai` and `resume-ai` are writes |
-| Listings | `GET /v1/listings/catalog` (`active`; its `listingId` is the PMS ID), `GET /v1/listings/{id}/snapshot` (the details the agent sees), `GET /v1/listing-groups`, `GET /v1/listing-groups/{id}/listings` (members' `listingRef` is Conduit's listing ID, the one knowledge scope uses) |
+| Listings | `GET /v1/listings/catalog` (`active`; its `listingId` is usually the PMS's ID, in each PMS's own format), `GET /v1/listings/{id}/snapshot` (the details the agent sees), `GET /v1/listing-groups`, `GET /v1/listing-groups/{id}/listings` (members' `listingRef` is Conduit's listing ID, the one knowledge scope uses) |
 | Tags | `GET /v1/conversation-tags` (topics and labels, `urgency_level`) |
 | Portal | `GET /v1/workspaces/{id}/portal-guides`, `GET /v1/workspaces/{id}/verification-rules` |
 | MCP only | `list_knowledge_sources` (sync cadence), `list_voice_agents`, `get_voice_agent`, `get_device_history` |
@@ -35,6 +36,8 @@ Contents: 1. Access · 2. Endpoints · 3. Write semantics · 4. Snapshot, apply,
 | Insights | `GET /v1/insights/automation_rate`, `GET /v1/insights/resolution_rate` |
 | Escalations | `GET /v1/escalations?status=` pending, reviewed, resolved or dismissed (ask for each): `guest_message`, `proposed_response`, `questions_for_operator`, `request_for_additional_info`. `POST …/{id}/resolve` is a write |
 | Workflows | `GET /v1/workspaces/{id}/workflows`, `GET /v1/workflows/schema` |
+
+Look a run's conversation up by `contact_id` (`GET /v1/conversations/lookup`) before reading its messages: the run's own `conversation_id` can 404 on the messages route.
 
 Lists use `limit` (up to 100) with `cursor`, returning `next_cursor` and `has_more`. The exceptions page inside `data` with `nextCursor` and `hasMore` and allow at most 50: the listings catalog, listing groups and their members, and conversation lookup. Follow every page and stop on a repeated cursor. Adapters that stopped at page one silently missed records.
 
