@@ -1,8 +1,8 @@
 {
   "name": "conduit-workspace",
   "displayName": "Conduit Workspace",
-  "version": "1.0.0",
-  "description": "Build, audit and improve a Conduit AI guest-messaging workspace (knowledge base, persona, guardrails, Conduit skills, custom tools and tests) so the AI resolves more conversations without a person.",
+  "version": "1.1.0",
+  "description": "Build, audit and improve a Conduit AI guest-messaging workspace (knowledge base, persona, guardrails, Conduit skills, custom tools and tests) so the AI resolves more conversations without a person. Finds the conversations that went wrong, separates AI causes from people and process causes, and fills gaps from your own sources.",
   "author": {
     "name": "Trevor Stout",
     "url": "https://github.com/tstout729"

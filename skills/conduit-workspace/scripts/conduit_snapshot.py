@@ -12,13 +12,15 @@ Examples:
 
 Output files: workspace.json, agents.json, skills.json, custom-tools.json,
 agent-tools/<agent_id>.json, agent-connections/<agent_id>.json,
+listings.json, listing-groups.json and conversation-tags.json (each skipped,
+and named under "skipped" in the manifest, if its route is unavailable),
 kb-nodes.json (with --kb), and manifest.json, written last, with
 "complete": true and the SHA-256 of every file. A failed run leaves an
 INCOMPLETE file instead; never use that folder as a rollback source.
 
-Not covered: workflows, triggers beyond those embedded in agents,
-workspace-level instructions, Behavior rules and hooks. Fetch any of those
-you plan to change separately.
+Not covered: workflows, voice agents, knowledge sources, triggers beyond
+those embedded in agents, workspace-level instructions, escalation rules and
+hooks. Fetch any of those you plan to change separately.
 
 Prints a JSON summary on stdout. Exit codes: 0 complete, 2 usage,
 3 auth, 4 API or network error, 5 incomplete export.
@@ -121,6 +123,52 @@ class Client:
             seen.add(cursor)
 
 
+LISTING_FIELDS = ("listingId", "name", "internalName", "publicName", "isActive", "active",
+                  "status_source", "status_changed_at", "pmsPlatform", "timezone")
+TAG_FIELDS = ("id", "name", "kind", "parent_tag_id", "urgency_level", "action_item", "shown_in_inbox", "count")
+
+
+def camel_paged(client, path, query, key):
+    """All items under data[key] from routes that page with data.nextCursor and data.hasMore (50 per page at most)."""
+    items, cursor, seen = [], None, set()
+    while True:
+        page = client.request("GET", path, {**query, "limit": 50, "cursor": cursor}).get("data")
+        if not isinstance(page, dict) or not isinstance(page.get(key), list) or not isinstance(page.get("hasMore"), bool):
+            raise IncompleteExport(f"{path}: response lacks data.{key} or a boolean data.hasMore")
+        items.extend(page[key])
+        if not page["hasMore"]:
+            return items
+        cursor = page.get("nextCursor")
+        if not cursor or cursor in seen:
+            raise IncompleteExport(f"{path}: hasMore is true but the cursor is missing or repeated")
+        seen.add(cursor)
+
+
+def listing_exports(client, query):
+    """Listings with their Conduit active state, and listing groups with their members."""
+    listings = [{k: l.get(k) for k in LISTING_FIELDS} for l in camel_paged(client, "/v1/listings/catalog", query, "listings")]
+    groups = []
+    for g in camel_paged(client, "/v1/listing-groups", query, "groups"):
+        members = camel_paged(client, f"/v1/listing-groups/{g.get('groupId')}/listings", query, "listings")
+        groups.append({"groupId": g.get("groupId"), "name": g.get("name"),
+                       "listings": [{k: m.get(k) for k in ("listingId", "listingRef", "isActive", "found")} for m in members]})
+    return listings, groups
+
+
+def optional(name, fetch, skipped):
+    """Runs fetch(); a missing, changed or forbidden route, or a malformed page, is recorded in skipped instead of failing."""
+    try:
+        return fetch()
+    except ApiError as err:
+        if err.status in (400, 403, 404, 405, 422, 501):
+            skipped[name] = f"HTTP {err.status}"
+            return None
+        raise
+    except IncompleteExport as err:
+        skipped[name] = str(err)
+        return None
+
+
 def kb_inventory(client, workspace, bodies):
     items, cursor, seen, total = [], None, set(), None
     while True:
@@ -190,6 +238,18 @@ def export(client, args, manifest):
             raise IncompleteExport(f"agent {aid}: tools or connections response has no data list")
         write(args.out, f"agent-tools/{aid}.json", access, manifest)
         write(args.out, f"agent-connections/{aid}.json", conns, manifest)
+    skipped = {}
+    found = optional("listings", lambda: listing_exports(client, query), skipped)
+    if found:
+        write(args.out, "listings.json", found[0], manifest)
+        write(args.out, "listing-groups.json", found[1], manifest)
+        counts.update(listings=len(found[0]), listing_groups=len(found[1]))
+    tags = optional("conversation-tags", lambda: client.paged("/v1/conversation-tags", query), skipped)
+    if tags is not None:
+        write(args.out, "conversation-tags.json", [{k: t.get(k) for k in TAG_FIELDS} for t in tags], manifest)
+        counts.update(conversation_tags=len(tags))
+    if skipped:
+        counts["skipped"] = skipped
     if args.kb or args.kb_bodies:
         nodes, total = kb_inventory(client, workspace, args.kb_bodies)
         write(args.out, "kb-nodes.json", nodes, manifest)

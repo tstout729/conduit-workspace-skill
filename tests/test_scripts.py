@@ -146,5 +146,205 @@ with tempfile.TemporaryDirectory() as d:
                        capture_output=True, text=True)
     check("malformed enums not echoed", r.returncode == 0 and "leaky-" not in r.stdout + r.stderr)
 
+# conduit_failures.py
+fail = load("conduit_failures")
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+iso = fail.iso
+
+now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
+
+
+def at(hours_ago):
+    return (now - timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")
+
+
+def msg(hours_ago, direction, body, sender="contact", ai=False):
+    return {"created_at": at(hours_ago), "direction": direction, "body": body,
+            "sender": {"type": sender}, "is_sent_by_autopilot": ai}
+
+
+check("parse_time handles Z and milliseconds", fail.parse_time("2026-10-10T12:00:00.123Z") == now.replace(microsecond=123000))
+check("parse_time handles epoch ms", fail.parse_time(1_760_097_600_000).year == 2025)
+check("parse_time rejects junk", fail.parse_time("leaky-zzz") is None and fail.parse_time(True) is None)
+thread = [msg(50, "inbound", "Where do we park?"),
+          msg(49.9, "outbound", "I'll check with the team and let you know!", "agent", True),
+          msg(30, "inbound", "Still no answer about parking, any update??"),
+          msg(29, "outbound", "Driveway, left side.", "user")]
+sig = fail.signals(thread, now, 24)
+check("follow-up after AI reply flagged", "guest_followed_up" in sig)
+check("teammate after AI flagged", "teammate_after_ai" in sig)
+check("kept promise not flagged", "unkept_promise" not in sig)
+quiet = [msg(60, "inbound", "Is there a crib?"), msg(59, "outbound", "I'll ask and get back to you.", "agent", True)]
+check("unkept promise flagged", "unkept_promise" in fail.signals(quiet, now, 24))
+check("last guest question unanswered flagged", "unanswered" in fail.signals([msg(5, "inbound", "hello, is anyone there?")], now, 24))
+check("closing thanks not unanswered", "unanswered" not in fail.signals([msg(5, "inbound", "Thanks so much!")], now, 24))
+check("fresh guest message not yet unanswered", "unanswered" not in fail.signals([msg(1, "inbound", "hello")], now, 24))
+check("happy thread has no signals", fail.signals([msg(10, "inbound", "Wifi?"), msg(9.9, "outbound", "Elkhorn.", "agent", True),
+                                                   msg(9, "inbound", "Thanks!")], now, 24) == set())
+check("api send is not a teammate", fail.signals([msg(10, "outbound", "Reminder", "external")], now, 24) == set())
+check("low score flagged", fail.score_signals({"support_service_quality_score": 2}) == {"low_score"})
+check("bool score ignored", fail.score_signals({"support_service_quality_score": True}) == set())
+check("thanks again is not a follow-up", "guest_followed_up" not in fail.signals(
+    [msg(10, "outbound", "Towels are in the closet.", "agent", True), msg(9, "inbound", "Thanks again!")], now, 24))
+check("directions are not a promise", "unkept_promise" not in fail.signals(
+    [msg(60, "outbound", "On the way in, turn left at the gate.", "agent", True)], now, 24))
+check("copilot teammate sends not flagged", fail.signals([msg(10, "outbound", "Sure!", "user")], now, 24, copilot=True) == set())
+check("stay score is its own signal", fail.score_signals({"stay_quality_score": 1}) == {"low_stay_score"})
+check("0-1 scale score not treated as low", fail.score_signals({"support_service_quality_score": 0.4}) == set())
+check("run not sent flagged", "run_not_sent" in fail.run_signals({"disposition": "resolved", "autopilot_sent": False}))
+check("copilot edit flagged", fail.run_signals({"disposition": "resolved", "proposal_outcome": "edited"}) == {"proposal_edited"})
+check("approved resolved run is clean", fail.run_signals({"disposition": "resolved", "autopilot_sent": True,
+                                                           "proposal_outcome": "approved"}) == set())
+old_day, new_day = "2020-01-01T00:00:00Z", iso(datetime.now(timezone.utc))
+since = datetime.now(timezone.utc) - timedelta(days=1)
+items, cut = fail.in_window(Fake([{"data": [{"created_at": new_day}], "has_more": True, "next_cursor": "a"},
+                                  {"data": [{"created_at": old_day}], "has_more": True, "next_cursor": "b"}]), "/x", {}, since, 5)
+check("in_window stops at an old page and isn't capped", len(items) == 1 and cut is False)
+items, cut = fail.in_window(Fake([{"data": [{"created_at": new_day}], "has_more": True, "next_cursor": "a"},
+                                  {"data": [{"created_at": new_day}], "has_more": True, "next_cursor": "b"}]), "/x", {}, since, 2)
+check("in_window reports a cap that cut the window", len(items) == 2 and cut is True)
+items, cut = fail.in_window(Fake([{"data": [{"created_at": new_day}], "has_more": True, "next_cursor": "a"},
+                                  {"data": [{"created_at": new_day}], "has_more": False}]), "/x", {}, since, 2)
+check("in_window list ending at the cap isn't capped", cut is False)
+items, cut = fail.in_window(Fake([{"data": [{"created_at": old_day}, {"created_at": new_day}], "has_more": True, "next_cursor": "a"},
+                                  {"data": [{"created_at": new_day}], "has_more": False}]), "/x", {}, since, 5)
+check("in_window reads on when a list isn't newest first", len(items) == 2)
+check("call after message flagged", fail.called_after([msg(10, "inbound", "x")], [{"direction": "inbound", "started_at": at(9)}], 24, now))
+
+
+class FakeApi(snap.Client):
+    """Answers by route; records every path and query it was asked for."""
+
+    def __init__(self, routes):
+        super().__init__("x", 0)
+        self.routes, self.asked = routes, []
+
+    def request(self, method, path, query=None, body=None):
+        self.asked.append((method, path, dict(query or {})))
+        for prefix, answer in self.routes:
+            if path.startswith(prefix):
+                return answer(query or {}) if callable(answer) else answer
+        raise snap.ApiError(404, path, "")
+
+
+recent = datetime.now(timezone.utc) - timedelta(days=2)
+secret_body = "Gate code 482913, guest Jane Doe +1 503 555 0100 asked again??"  # check:allow (fabricated)
+routes = [
+    ("/v1/workspaces", {"data": [{"id": "w1", "name": "W"}]}),
+    ("/v1/agents/a1/runs", {"data": [
+        {"id": "r1", "contact_id": "c1", "disposition": "escalated", "status": "completed", "created_at": iso(recent)},
+        {"id": "r2", "contact_id": "c2", "disposition": "resolved", "status": "completed", "created_at": iso(recent)},
+        {"id": "r3", "disposition": "proactive", "status": "completed", "created_at": iso(recent)},
+        {"id": "r4", "status": "running", "created_at": iso(recent)},
+        {"id": "r0", "contact_id": "c9", "disposition": "escalated", "status": "completed", "created_at": "2020-01-01T00:00:00Z"}],
+        "has_more": False}),
+    ("/v1/agents", {"data": [{"id": "a1", "name": "Guest Agent", "triggers": [{"type": "message", "enabled": False}]},
+                             {"id": "a2", "name": "Notifier", "triggers": [{"type": "cron", "enabled": True}]}], "has_more": False}),
+    ("/v1/escalations", lambda q: {"data": [{"id": "e-" + q["status"], "contact_id": "c1", "agent_id": "a1",
+                                            "status": q["status"], "created_at": iso(recent),
+                                            "guest_message": secret_body, "questions_for_operator": "Parking?"}]
+                                   if q["status"] == "resolved" else [], "has_more": False}),
+    ("/v1/conversations/lookup", lambda q: {"data": {"conversation": {
+        "id": "conv-" + q["contact_id"], "reservation": {"listing_id": "L1", "guest_name": "Jane Doe"},
+        "support_service_quality_score": 1, "summary": secret_body}}}),
+    ("/v1/conversations/", {"data": [
+        {"created_at": iso(recent), "direction": "inbound", "body": secret_body, "sender": {"type": "contact"}},
+        {"created_at": iso(recent + timedelta(minutes=1)), "direction": "outbound", "body": "Sure!",
+         "sender": {"type": "user"}, "is_sent_by_autopilot": False}], "has_more": False}),
+    ("/v1/insights/", {"data": {"numerator": 9, "denominator": 10, "rate": 0.9, "formula_version": "f1"}}),
+]
+args = type("A", (), dict(workspace=None, days=30, agent=None, all_agents=False, sample=5, max_conversations=10, repeat_hours=24,
+                           calls=False, max_pages=5))()
+api = FakeApi(routes)
+with tempfile.TemporaryDirectory() as d:
+    out = os.path.join(d, "out")
+    os.makedirs(out)
+    summary = fail.collect(api, args, out, {})
+    cases = json.load(open(os.path.join(out, "cases.json")))
+    dumped = json.dumps(summary) + json.dumps(cases)
+    check("failures: every escalation status requested",
+          {q.get("status") for m, p, q in api.asked if p == "/v1/escalations"} == set(fail.ESCALATION_STATUSES))
+    check("failures: only GET requests", all(m == "GET" for m, p, q in api.asked))
+    check("failures: run outside the window ignored", all(c["contact_id"] != "c9" for c in cases))
+    check("failures: escalated conversation becomes a case with signals",
+          any(c["contact_id"] == "c1" and "run_escalated" in c["signals"] and "escalation_resolved" in c["signals"]
+              and "low_score" in c["signals"] for c in cases))
+    check("failures: resolved conversation sampled", any(c["contact_id"] == "c2" for c in cases))
+    check("failures: no message text, names, phones or codes in cases or summary",
+          not any(x in dumped for x in ("482913", "Jane", "555", "asked again", "Parking?")))
+    check("failures: operator questions kept in the private escalations file",
+          "Parking?" in open(os.path.join(out, "escalations.json")).read())
+    check("failures: runs without a contact counted", summary["runs_without_contact"] == 2)
+    check("failures: notifier agent skipped by default", not any(p.startswith("/v1/agents/a2") for m, p, q in api.asked))
+    check("failures: summary serializes with a run that has no disposition", json.dumps(summary, sort_keys=True) is not None)
+
+# conduit_snapshot.py optional exports
+skipped = {}
+check("optional export skips a missing route", snap.optional("x", lambda: FakeApi([]).request("GET", "/v1/nope"), skipped) is None
+      and skipped == {"x": "HTTP 404"})
+try:
+    snap.camel_paged(Fake([{"data": {"listings": [1], "hasMore": True, "nextCursor": "a"}},
+                           {"data": {"listings": [2], "hasMore": True, "nextCursor": "a"}}]), "/x", {}, "listings")
+    check("camel pager repeated cursor raises", False)
+except snap.IncompleteExport:
+    check("camel pager repeated cursor raises", True)
+check("camel pager returns all", snap.camel_paged(Fake([{"data": {"listings": [1], "hasMore": True, "nextCursor": "a"}},
+                                                        {"data": {"listings": [2], "hasMore": False}}]), "/x", {}, "listings") == [1, 2])
+
+# conduit_lint.py new checks
+with tempfile.TemporaryDirectory() as d:
+    lid = "a1b2c3d4e5f60718293a4b5c"
+    agents = [
+        {"id": "a1", "name": "Guest", "enabled": True, "operation_mode": "autopilot", "response_language": "English",
+         "instructions": "", "skill_ids": [], "triggers": [{"type": "message", "enabled": True,
+                                                           "config": {"scope_type": "inbox", "inbox_type_id": "i1"}}],
+         "guardrails": [{"title": "Cabin rule", "knowledge": f"For listing {lid} never mention the hot tub."}]},
+        {"id": "a2", "name": "Copy", "enabled": True, "operation_mode": "copilot", "response_language": "Original",
+         "instructions": "", "skill_ids": [], "guardrails": [],
+         "triggers": [{"type": "message", "enabled": True, "config": {"scope_type": "inbox", "inbox_type_id": "i1"}}]},
+        {"id": "a3", "name": "Idle", "enabled": True, "operation_mode": "autopilot", "instructions": "", "skill_ids": [],
+         "guardrails": [], "triggers": [{"type": "cron", "enabled": False}]},
+    ]
+    json.dump(agents, open(os.path.join(d, "agents.json"), "w"))
+    json.dump([], open(os.path.join(d, "skills.json"), "w"))
+    json.dump([{"listingId": lid, "internalName": "Cedar Cabin", "isActive": True},
+               {"listingId": "L2xxxxxx", "internalName": "Pine", "isActive": True},
+               *[{"listingId": f"L{i}cover0", "internalName": f"Cover {i}", "isActive": True} for i in range(4, 8)],
+               {"listingId": "L3xxxxxx", "internalName": "Studio", "isActive": False}], open(os.path.join(d, "listings.json"), "w"))
+    json.dump([{"groupId": "g1", "name": "Building", "listings": [{"listingRef": "refBldgA", "listingId": "Lbldg", "isActive": True}]}],
+              open(os.path.join(d, "listing-groups.json"), "w"))
+    json.dump([{"name": "Refund", "urgency_level": "urgent", "count": 4}], open(os.path.join(d, "conversation-tags.json"), "w"))
+    json.dump([{"title": "Pine - parking", "entity_ids": ["L2xxxxxx"]}, {"title": "Pine: Parking", "entity_ids": ["L2xxxxxx"]},
+               {"title": "Studio (PMS)", "source": "pms", "entity_ids": ["refStudio"]},
+               {"title": "Pine (PMS)", "source": "pms", "entity_ids": ["L2xxxxxx"]},
+               {"title": "Bldg A (PMS)", "source": "pms", "entity_ids": ["refBldgA"]},
+               {"title": "Building access and Wi-Fi", "entity_ids": ["group:g1"]},
+               {"title": "Studio retired (PMS)", "source": "pms", "entity_ids": ["refOld"]},
+               *[{"title": f"Cover {i} notes", "entity_ids": [f"L{i}cover0"]} for i in range(4, 8)]],
+              open(os.path.join(d, "kb-nodes.json"), "w"))
+    r = subprocess.run([sys.executable, "-I", "-B", os.path.join(SKILL, "scripts", "conduit_lint.py"), d],
+                       capture_output=True, text=True)
+    got = {i["check"] for i in json.loads(r.stdout)["findings"]} if r.returncode == 0 else set()
+    for name in ("never-runs", "shared-inbox", "fixed-reply-language", "listing-id-in-guardrail", "urgent-tag",
+                 "inactive-listings", "duplicate-article", "pms-only-listing"):
+        check(f"lint flags {name}", name in got)
+    check("pms-only listing named by its article", any(i["check"] == "pms-only-listing" and i["object"] == "Studio (PMS)"
+                                                       for i in json.loads(r.stdout)["findings"]))
+    check("group-scoped article covers its members", not any(i["check"] == "pms-only-listing" and i["object"] == "Bldg A (PMS)"
+                                                              for i in json.loads(r.stdout)["findings"]))
+    check("listing with its own article not pms-only", not any(i["check"] == "pms-only-listing" and i["object"] == "Pine (PMS)"
+                                                                for i in json.loads(r.stdout)["findings"]))
+    check("lint never prints guardrail text", "hot tub" not in r.stdout)
+
+# evals/cases.json, when this checkout has it
+cases_path = os.path.join(SKILL, "..", "..", "evals", "cases.json")
+if os.path.exists(cases_path):
+    ev = json.load(open(cases_path))
+    ids = [c.get("id") for c in ev]
+    check("eval cases have unique ids", len(ids) == len(set(ids)) and all(ids))
+    check("eval cases are complete", all(isinstance(c.get(k), str) and c[k] for c in ev for k in ("id", "mode", "prompt", "context"))
+          and all(isinstance(c.get(k), list) and c[k] for c in ev for k in ("expect", "must_not")))
+
 print("FAILURES:", failures)
 sys.exit(1 if failures else 0)

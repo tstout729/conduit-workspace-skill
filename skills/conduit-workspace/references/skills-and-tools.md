@@ -2,7 +2,7 @@
 
 Read this to create, route, fix or retire Conduit skills, custom tools, workflows or utility agents.
 
-Contents: 1. Choose the object · 2. Descriptions · 3. Skill body · 4. Sharing and assignment · 5. Tool contract · 6. The backend decides · 7. Release and retire · 8. Workflows and utility agents
+Contents: 1. Choose the object · 2. Descriptions · 3. Skill body · 4. Sharing and assignment · 5. Tool contract · 6. The backend decides · 7. Release and retire · 8. Workflows, utility agents and voice agents
 
 ## 1. Choose the object
 
@@ -122,7 +122,7 @@ returns {message, rawData}:
 
 Before the backend ships, write skills that behave correctly with both the old and new results. To retire a tool, make its code return `retired: true` and the replacement name; disable toggles have failed to persist. Inventory every consumer before closing an old route.
 
-## 8. Workflows and utility agents
+## 8. Workflows, utility agents and voice agents
 
 **Workflows**
 - Creates and updates are drafts unless activated, and every update is a new version. Check the active version, not `enabled`.
@@ -132,8 +132,15 @@ Before the backend ships, write skills that behave correctly with both the old a
 - Track every automated send in an outbox: pending, dispatched, delivered, suppressed or failed. Claim each event once before dispatch.
 - Count a send as delivered only from a receipt matched to the recipient, stay and listing. A "sent" stamp written before dispatch once hid a notice that never went out. Never retry an ambiguous send.
 - Audit prompts and branch conditions for copy-paste errors and output names the agent never emits.
+- Workflow and scheduled messages carry facts too: check-in times, door steps, parking. When knowledge changes, search them for the old value ([Knowledge](knowledge.md), section 9).
 
 **Utility agents** (notifiers, auto-accept)
 - Least-privilege tools, at most one message, fail closed, verify by re-reading.
 - Dry-run with payloads that hit the skip paths.
 - Webhook-triggered agents have their own config needs, such as an empty trigger `config` and `responseflow`. Check the current schema.
+- An internal agent on a workflow trigger can draft the "learn each answer once" fact from a resolved escalation. Keep a person's approval before anything is saved.
+
+**Voice agents**
+- List them with MCP `list_voice_agents` and read each with `get_voice_agent`. Each has its own prompt, welcome message, escalation and inbound schedule.
+- Facts and rules copied into a voice prompt drift from the chat agent's. Prefer shared knowledge; when a fact must sit in the prompt, update it with the chat agent's.
+- Calls are evidence for the loop: `GET /v1/calls` and `GET /v1/contacts/{id}/calls` give transcripts, summaries and transfers. A guest who called after messaging often means the chat didn't resolve.
