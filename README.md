@@ -113,4 +113,4 @@ The 41% and 92% are Conduit's own automation rate for our workspace (`GET /v1/in
 
 ## License
 
-[MIT](LICENSE). Not affiliated with or endorsed by Conduit. Conduit is a trademark of its owner.
+[MIT](LICENSE). Conduit is a trademark of its owner.
